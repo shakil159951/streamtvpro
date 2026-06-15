@@ -551,6 +551,40 @@
     /* Player video area */
     .player-wrap { flex: none; height: calc(100vw * 9 / 16); min-height: 180px; max-height: 240px; }
 
+    /* ===== LANDSCAPE MODE ===== */
+    /* Fill to fit toggle button */
+    #fit-toggle-btn { display: flex !important; }
+  }
+
+  /* Landscape: player takes full screen width/height, panel slides below */
+  @media (max-width: 900px) and (orientation: landscape) {
+    #app { height: 100dvh; height: 100vh; }
+    .main { flex-direction: row; }
+    .center { flex-direction: column; }
+
+    /* Player fills full landscape height */
+    .player-wrap {
+      flex: none !important;
+      height: 100dvh !important;
+      height: 100vh !important;
+      max-height: none !important;
+      width: 100% !important;
+    }
+
+    /* Fill-to-fit mode (toggled by button) */
+    .player-wrap.fill-fit #videoEl { object-fit: cover !important; }
+
+    /* Mobile panel hidden in landscape by default — user can toggle */
+    #mobile-panel { display: none !important; }
+
+    /* Header hidden in landscape to save space */
+    header { display: none !important; }
+
+    /* Landscape overlay padding tweak */
+    .player-overlay-top { padding: 10px 16px; }
+    .player-overlay-bottom { padding: 8px 16px 12px; }
+  }
+
     /* Player overlay top */
     .player-overlay-top { padding: 8px 10px; }
     .now-playing-badge { padding: 4px 10px; }
@@ -698,6 +732,10 @@
 
   /* Glow effects */
   .glow-line { height: 1px; background: linear-gradient(90deg, transparent, var(--accent), transparent); opacity: 0.3; }
+
+  /* Fill-to-fit button (landscape only) */
+  #fit-toggle-btn { display: none; }
+  #fit-toggle-btn.fit-on { color: var(--accent); }
   
   /* No channels placeholder */
   .empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 20px; color: var(--text3); font-size: 13px; text-align: center; }
@@ -921,6 +959,9 @@
                 </button>
                 <div class="quality-menu" id="quality-menu"></div>
               </div>
+              <button class="ctrl-btn" id="fit-toggle-btn" onclick="toggleFillFit()" title="Fill to Fit">
+                <svg id="fit-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M3 3h8v2H5v6H3V3zm0 18v-8h2v6h6v2H3zm18-8h-2V7h-6V5h8v8zm0 8h-8v-2h6v-6h2v8z"/></svg>
+              </button>
               <button class="ctrl-btn" onclick="toggleFullscreen()" title="Fullscreen">
                 <svg id="fs-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
               </button>
@@ -1107,14 +1148,14 @@
 <script>
 // ===== DEFAULT PLAYLISTS (always present, never deletable) =====
 const DEFAULT_PLAYLISTS = [
-  { id: 'pirates', name: 'Pirates TV', url: 'https://raw.githubusercontent.com/FunctionError/PiratesTv/main/combined_playlist.m3u', active: true, isDefault: true }
+  { id: 'streamtv_default', name: 'Stream TV Pro', url: 'https://raw.githubusercontent.com/FunctionError/PiratesTv/main/combined_playlist.m3u', active: true, isDefault: true }
 ];
 
 function getPlaylists() {
   const saved = JSON.parse(localStorage.getItem('stv_playlists') || 'null');
   if (!saved) return DEFAULT_PLAYLISTS.map(p => ({...p}));
-  // Remove old BDIX playlist
-  const cleaned = saved.filter(p => p.id !== 'bdix');
+  // Remove legacy/renamed playlists
+  const cleaned = saved.filter(p => p.id !== 'bdix' && p.id !== 'pirates');
   // Always ensure default playlists exist and are protected
   DEFAULT_PLAYLISTS.forEach(def => {
     const existing = cleaned.find(p => p.id === def.id);
@@ -1552,9 +1593,31 @@ function setupOverlay() {
     if (isPlaying) hideOverlay();
   });
 
-  // Mobile/fullscreen: tap video area toggles overlay
+  // Mobile/touch: tap to toggle overlay (touchstart for faster response)
+  let touchMoved = false;
+  wrap.addEventListener('touchstart', (e) => {
+    touchMoved = false;
+  }, { passive: true });
+  wrap.addEventListener('touchmove', () => {
+    touchMoved = true;
+  }, { passive: true });
+  wrap.addEventListener('touchend', (e) => {
+    if (touchMoved) return; // was a scroll/swipe, ignore
+    if (e.target.closest('button') || e.target.closest('input')) return;
+    e.preventDefault();
+    if (overlay.classList.contains('auto-hide') || !overlay.classList.contains('visible')) {
+      showOverlay();
+      startHideTimer();
+    } else {
+      hideOverlay();
+    }
+  });
+
+  // Desktop click (non-touch)
   wrap.addEventListener('click', (e) => {
     if (e.target.closest('button') || e.target.closest('input')) return;
+    // Skip if touch already handled
+    if ('ontouchend' in window) return;
     if (overlay.classList.contains('auto-hide') || !overlay.classList.contains('visible')) {
       showOverlay();
       startHideTimer();
@@ -1623,6 +1686,27 @@ function toggleFullscreen() {
     if (screen.orientation && screen.orientation.unlock) {
       try { screen.orientation.unlock(); } catch (e) {}
     }
+  }
+}
+
+// ===== FILL TO FIT =====
+let fillFitOn = false;
+function toggleFillFit() {
+  fillFitOn = !fillFitOn;
+  const wrap = document.querySelector('.player-wrap');
+  const btn = document.getElementById('fit-toggle-btn');
+  if (fillFitOn) {
+    wrap.classList.add('fill-fit');
+    video.style.objectFit = 'cover';
+    btn.classList.add('fit-on');
+    btn.style.color = 'var(--accent)';
+    showToast('Fill to Fit: ON', 'info');
+  } else {
+    wrap.classList.remove('fill-fit');
+    video.style.objectFit = 'contain';
+    btn.classList.remove('fit-on');
+    btn.style.color = '';
+    showToast('Fill to Fit: OFF', 'info');
   }
 }
 
@@ -1809,7 +1893,7 @@ function activatePlaylist(idx) {
 
 function removePlaylist(idx) {
   if (playlists[idx] && playlists[idx].isDefault) {
-    showToast('Pirates TV playlist cannot be removed', 'error');
+    showToast('Default playlist cannot be removed', 'error');
     return;
   }
   if (playlists.length <= 1) { showToast('Cannot remove the last playlist', 'error'); return; }
