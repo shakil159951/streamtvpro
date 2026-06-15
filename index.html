@@ -501,10 +501,11 @@
   }
   @media (max-width: 768px) {
     #sidebar, #info-panel { display: none; }
-    #hamburger { display: none; }
+    #hamburger { display: flex !important; }
     .header-search { display: none; }
     .live-badge { display: none; }
     .now-playing-badge { display: none; }
+    .header-logo-text { font-size: 14px; letter-spacing: 0.5px; }
   }
 
   /* ===== MOBILE PANEL BELOW PLAYER ===== */
@@ -538,11 +539,69 @@
   .mpanel-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
   .mpanel-body { display: none; flex: 1; overflow-y: auto; flex-direction: column; }
   .mpanel-body.active { display: flex; }
+
   @media (max-width: 768px) {
-    #mobile-panel { display: flex; }
+    html, body { overflow: hidden; height: 100%; }
+    #app { height: 100dvh; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+    .main { flex: 1; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
+    .center { flex: 1; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
+    #mobile-panel { display: flex; flex: 1; min-height: 0; }
     #bottom-nav { display: none !important; }
-    .center { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
-    .player-wrap { flex: none; height: calc(100vw * 9/16); }
+
+    /* Player video area */
+    .player-wrap { flex: none; height: calc(100vw * 9 / 16); min-height: 180px; max-height: 240px; }
+
+    /* Player overlay top */
+    .player-overlay-top { padding: 8px 10px; }
+    .now-playing-badge { padding: 4px 10px; }
+    .now-playing-badge span { font-size: 12px; }
+
+    /* Player controls bottom */
+    .player-overlay-bottom { padding: 6px 10px 10px; }
+    .progress-area { margin-bottom: 6px; }
+    .progress-time { font-size: 10px; margin-top: 4px; }
+
+    /* Controls row — prevent overflow */
+    .player-controls {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      flex-wrap: nowrap;
+      overflow: hidden;
+      width: 100%;
+    }
+    .ctrl-btn { width: 28px; height: 28px; border-radius: 6px; flex-shrink: 0; }
+    .ctrl-btn svg { width: 15px; height: 15px; }
+    .ctrl-spacer { flex: 1; min-width: 4px; }
+
+    /* Volume — hide slider on very small screens, keep icon */
+    .volume-group { gap: 2px; flex-shrink: 0; }
+    .volume-slider { width: 48px; }
+
+    /* Quality badge */
+    .quality-badge { padding: 2px 5px; font-size: 9px; letter-spacing: 0.5px; flex-shrink: 0; }
+
+    /* Quality menu above controls */
+    .quality-menu { bottom: 42px; }
+
+    /* Center play button */
+    .player-center-btn { width: 52px; height: 52px; }
+    .player-center-btn svg { width: 22px; height: 22px; }
+
+    /* Drawer */
+    .drawer-panel { width: 85vw; max-width: 320px; }
+
+    /* Modal */
+    .modal { padding: 20px 16px; max-width: calc(100vw - 32px); }
+  }
+
+  @media (max-width: 400px) {
+    .player-wrap { height: calc(100vw * 9 / 16); min-height: 160px; }
+    header { padding: 0 10px; gap: 8px; }
+    .btn-icon { width: 30px; height: 30px; }
+    .volume-slider { display: none; }
+    .ctrl-btn { width: 26px; height: 26px; }
+    .ctrl-btn svg { width: 14px; height: 14px; }
   }
 
   .dev-body {
@@ -1858,6 +1917,21 @@ function formatTime(s) {
 
 function escHtml(str) {
   return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ===== MOBILE NAV =====
+function mobileNav(tab) {
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  const btn = document.getElementById('nav-' + tab);
+  if (btn) btn.classList.add('active');
+  if (tab === 'search') {
+    openDrawer();
+    setTimeout(() => { const s = document.getElementById('m-search-input'); if(s) s.focus(); }, 300);
+  } else if (tab === 'list') {
+    openDrawer();
+  } else {
+    closeDrawer();
+  }
 }
 
 // Keyboard shortcuts
