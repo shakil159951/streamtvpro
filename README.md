@@ -1,10 +1,20 @@
-# 📺 StreamTVPro
+<div align="center">
+<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
+</div>
 
-Welcome to **StreamTVPro**! This is a web-based IPTV player and streaming interface designed to provide a smooth and lightweight live TV viewing experience. 
+# Run and deploy your AI Studio app
 
-## ✨ Features
-*   **Web Player:** Watch live streams directly in your web browser.
-*   **Clean Interface:** Simple, fast, and easy-to-use UI built with HTML.
-*   *(Add any other specific features your project has here, like "Supports .m3u8 links" or "Responsive design")
+This contains everything you need to run your app locally.
+
+View your app in AI Studio: https://ai.studio/apps/33115df2-55d6-426e-b3b7-0a0a09fcb3d3
+
+## Run Locally
+
+**Prerequisites:**  Node.js
 
 
+1. Install dependencies:
+   `npm install`
+2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+3. Run the app:
+   `npm run dev`
