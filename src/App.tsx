@@ -37,6 +37,14 @@ export default function App() {
   const activePlaylist = useMemo(() => playlists.find(p => p.active) || playlists[0], [playlists]);
 
   useEffect(() => {
+    if (activeChannel) {
+      document.title = `${activeChannel.name} - StreamTVPro`;
+    } else {
+      document.title = 'StreamTVPro';
+    }
+  }, [activeChannel]);
+
+  useEffect(() => {
     loadPlaylist(activePlaylist);
   }, [activePlaylist]);
 

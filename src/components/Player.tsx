@@ -288,7 +288,20 @@ export default function Player({ channel, onNext, onPrev }: PlayerProps) {
       }
     };
     
-    const onFullscreenChange = () => setIsFullscreen(!!document.fullscreenElement);
+    const onFullscreenChange = () => {
+      const isFull = !!document.fullscreenElement;
+      setIsFullscreen(isFull);
+      const screenAny = window.screen as any;
+      if (isFull && screenAny && screenAny.orientation && screenAny.orientation.lock) {
+        try {
+          screenAny.orientation.lock('landscape').catch(() => {});
+        } catch (e) {}
+      } else if (!isFull && screenAny && screenAny.orientation && screenAny.orientation.unlock) {
+        try {
+          screenAny.orientation.unlock();
+        } catch (e) {}
+      }
+    };
 
     video.addEventListener('playing', onPlay);
     video.addEventListener('waiting', onWaiting);
