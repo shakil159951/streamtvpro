@@ -16,13 +16,12 @@ export default function App() {
   const [activeChannel, setActiveChannel] = useState<Channel | null>(null);
   const [search, setSearch] = useState('');
   const [groupFilter, setGroupFilter] = useState('');
-  const [activeTab, setActiveTab] = useState<'channels' | 'info' | 'lists' | 'dev'>('channels');
+  const [activeTab, setActiveTab] = useState<'channels' | 'lists' | 'dev'>('channels');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   // UI State
   const [leftDrawerOpen, setLeftDrawerOpen] = useState(false);
-  const [rightDrawerOpen, setRightDrawerOpen] = useState(false);
   const [showNotice, setShowNotice] = useState(true);
 
   // Modals
@@ -119,46 +118,44 @@ export default function App() {
   };
 
   return (
-    <div className="flex flex-col h-[100dvh] w-full bg-slate-950 text-slate-200 overflow-hidden font-sans">
+    <div className="flex flex-col h-[100dvh] w-full bg-[#0a0a0a] text-slate-200 overflow-hidden font-sans">
       {/* Header */}
-      <header className="flex-shrink-0 h-16 bg-slate-900/80 backdrop-blur-xl border-b border-slate-800/80 flex items-center justify-between px-4 z-40">
+      <header className="flex-shrink-0 h-16 bg-[#0a0a0a]/80 backdrop-blur-xl border-b border-white/5 flex items-center justify-between px-4 z-40">
         <div className="flex items-center gap-3">
-          <button onClick={() => setLeftDrawerOpen(true)} className="hidden md:flex lg:hidden p-2 -ml-2 text-slate-400 hover:text-white hover:bg-slate-800/50 rounded-full transition-colors">
+          <button onClick={() => setLeftDrawerOpen(true)} className="hidden md:flex lg:hidden p-2 -ml-2 text-slate-400 hover:text-white rounded-full transition-colors">
             <ListVideo className="w-5 h-5" />
           </button>
-          <div className="hidden sm:flex w-10 h-10 bg-gradient-to-br from-teal-400 to-teal-600 rounded-full items-center justify-center shadow-[0_0_20px_rgba(20,184,166,0.3)] shrink-0">
-            <Tv className="w-5 h-5 text-white" />
+          <div className="hidden sm:flex w-9 h-9 bg-teal-500/10 rounded-lg items-center justify-center border border-teal-500/20 shrink-0">
+            <Tv className="w-5 h-5 text-teal-400" />
           </div>
-          <h1 className="text-lg font-black tracking-widest text-white whitespace-nowrap drop-shadow-[0_0_10px_rgba(20,184,166,0.2)]">
-            STREAM <span className="text-teal-400">TV</span> <span className="text-amber-500 font-normal">PRO</span>
+          <h1 className="flex items-center gap-1.5 text-lg font-bold tracking-widest text-white whitespace-nowrap">
+            <span>STREAM <span className="text-teal-400">TV</span></span>
+            <span className="text-[10px] bg-gradient-to-r from-teal-400 to-emerald-400 text-slate-950 px-1.5 py-0.5 rounded font-black tracking-tight">PRO</span>
           </h1>
         </div>
         
         <div className="hidden md:flex flex-1 max-w-md mx-6 relative group">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 group-focus-within:text-teal-400 transition-colors" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-teal-400 transition-colors" />
           <input 
             type="text" 
             placeholder="Search channels..." 
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full bg-slate-800/50 border border-slate-700/80 rounded-full py-2 pl-10 pr-4 focus:outline-none focus:border-teal-500/80 focus:ring-1 focus:ring-teal-500/50 text-sm transition-all"
+            className="w-full bg-white/5 border border-white/10 rounded-xl py-2 pl-10 pr-4 focus:outline-none focus:border-teal-500/50 focus:bg-white/10 text-sm transition-all"
           />
         </div>
         
         <div className="flex items-center gap-2">
-          <button onClick={() => setRightDrawerOpen(true)} className="hidden md:flex lg:hidden p-2 text-slate-400 hover:text-white hover:bg-slate-800/50 rounded-full transition-colors">
-            <Activity className="w-5 h-5" />
-          </button>
           {activeChannel && (
             <div className="hidden lg:flex items-center gap-2 bg-red-500/10 border border-red-500/20 px-3 py-1.5 rounded-lg mr-2">
               <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-              <span className="text-xs font-bold text-red-500 tracking-widest">LIVE</span>
+              <span className="text-[10px] font-bold text-red-500 tracking-widest uppercase">Live</span>
             </div>
           )}
-          <button onClick={() => setShowAddModal(true)} className="p-2.5 bg-slate-800 border border-slate-700 hover:border-teal-500 hover:text-teal-400 rounded-full transition-all" title="Add Playlist">
+          <button onClick={() => setShowAddModal(true)} className="p-2 bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 hover:text-white rounded-lg transition-all" title="Add Playlist">
             <Plus className="w-4 h-4" />
           </button>
-          <button onClick={() => loadPlaylist(activePlaylist)} className="p-2.5 bg-slate-800 border border-slate-700 hover:border-teal-500 hover:text-teal-400 rounded-full transition-all" title="Reload">
+          <button onClick={() => loadPlaylist(activePlaylist)} className="p-2 bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 hover:text-white rounded-lg transition-all" title="Reload">
             <RefreshCw className="w-4 h-4" />
           </button>
         </div>
@@ -183,23 +180,22 @@ export default function App() {
         
         {/* Drawers Backdrops */}
         {leftDrawerOpen && <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-40 lg:hidden" onClick={() => setLeftDrawerOpen(false)} />}
-        {rightDrawerOpen && <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-40 lg:hidden" onClick={() => setRightDrawerOpen(false)} />}
 
         {/* Left Sidebar / Drawer */}
         <aside className={`
-          flex flex-col w-72 lg:w-80 bg-slate-950 border-r border-slate-800/80 shrink-0
+          flex flex-col w-72 lg:w-80 bg-[#0a0a0a] border-r border-white/5 shrink-0
           fixed lg:relative inset-y-0 left-0 z-50 transform transition-transform duration-300 ease-in-out shadow-[10px_0_30px_rgba(0,0,0,0.5)]
           ${leftDrawerOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
           hidden md:flex lg:flex
         `}>
-          <div className="flex p-2 gap-1 bg-slate-950/50 border-b border-slate-800/80 shrink-0">
-            <button onClick={() => setActiveTab('channels')} className={`flex-1 flex flex-col items-center gap-1.5 p-2 rounded-xl text-xs font-semibold transition-colors ${activeTab === 'channels' ? 'bg-slate-800/80 text-teal-400 shadow-sm' : 'text-slate-400 hover:bg-slate-800/40 hover:text-white'}`}>
+          <div className="flex p-2 gap-1 bg-transparent border-b border-white/5 shrink-0">
+            <button onClick={() => setActiveTab('channels')} className={`flex-1 flex flex-col items-center gap-1.5 p-2 rounded-lg text-xs font-semibold transition-colors ${activeTab === 'channels' ? 'bg-white/10 text-teal-400' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
               <MonitorPlay className="w-4 h-4" /> Channels
             </button>
-            <button onClick={() => setActiveTab('lists')} className={`flex-1 flex flex-col items-center gap-1.5 p-2 rounded-xl text-xs font-semibold transition-colors ${activeTab === 'lists' ? 'bg-slate-800/80 text-teal-400 shadow-sm' : 'text-slate-400 hover:bg-slate-800/40 hover:text-white'}`}>
+            <button onClick={() => setActiveTab('lists')} className={`flex-1 flex flex-col items-center gap-1.5 p-2 rounded-lg text-xs font-semibold transition-colors ${activeTab === 'lists' ? 'bg-white/10 text-teal-400' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
               <ListVideo className="w-4 h-4" /> Playlists
             </button>
-            <button onClick={() => setActiveTab('dev')} className={`flex-1 flex flex-col items-center gap-1.5 p-2 rounded-xl text-xs font-semibold transition-colors ${activeTab === 'dev' ? 'bg-slate-800/80 text-teal-400 shadow-sm' : 'text-slate-400 hover:bg-slate-800/40 hover:text-white'}`}>
+            <button onClick={() => setActiveTab('dev')} className={`flex-1 flex flex-col items-center gap-1.5 p-2 rounded-lg text-xs font-semibold transition-colors ${activeTab === 'dev' ? 'bg-white/10 text-teal-400' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
               <Code className="w-4 h-4" /> Developer
             </button>
           </div>
@@ -211,7 +207,7 @@ export default function App() {
                   <select 
                     value={groupFilter} 
                     onChange={(e) => setGroupFilter(e.target.value)}
-                    className="w-full bg-slate-800/80 border border-slate-700/80 rounded-xl py-2 px-3 text-sm focus:outline-none focus:border-teal-500 appearance-none cursor-pointer"
+                    className="w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-sm focus:outline-none focus:border-teal-500/50 focus:bg-white/10 appearance-none cursor-pointer"
                   >
                     <option value="">All Groups ({channels.length})</option>
                     {groups.map(g => <option key={g} value={g}>{g}</option>)}
@@ -220,8 +216,8 @@ export default function App() {
                 
                 <div className="flex-1 overflow-y-auto px-2 pb-4 space-y-1">
                   {loading ? (
-                     <div className="p-4 text-center text-sm text-slate-500 flex flex-col items-center gap-2">
-                       <div className="animate-spin w-6 h-6 border-2 border-teal-500 border-t-transparent rounded-full" />
+                     <div className="p-4 text-center text-sm text-slate-500 flex flex-col items-center gap-3">
+                       <div className="animate-spin w-5 h-5 border-2 border-teal-500 border-t-transparent rounded-full" />
                        Loading channels...
                      </div>
                   ) : filteredChannels.length === 0 ? (
@@ -233,14 +229,14 @@ export default function App() {
                         <button 
                           key={ch.uid}
                           onClick={() => handlePlay(ch)}
-                          className={`w-full flex items-center gap-3 p-2.5 rounded-2xl transition-all border relative overflow-hidden group ${isActive ? 'bg-gradient-to-r from-teal-500/10 to-transparent border-teal-500/40 shadow-[0_0_15px_rgba(20,184,166,0.1)]' : 'border-transparent hover:bg-white/5'}`}
+                          className={`w-full flex items-center gap-3 p-2.5 rounded-xl transition-all border relative overflow-hidden group ${isActive ? 'bg-white/10 border-teal-500/20 shadow-sm' : 'border-transparent hover:bg-white/5'}`}
                         >
-                          {isActive && <div className="absolute inset-y-0 left-0 w-1 bg-teal-400 shadow-[0_0_10px_rgba(20,184,166,0.8)]" />}
-                          <div className={`w-10 h-10 rounded-full bg-slate-900 flex items-center justify-center text-xs font-black shrink-0 overflow-hidden border shadow-inner transition-colors ${isActive ? 'border-teal-400/50 text-teal-400 shadow-[0_0_10px_rgba(20,184,166,0.2)]' : 'border-slate-700/50 text-slate-400 group-hover:border-slate-500/50'}`}>
+                          {isActive && <div className="absolute inset-y-0 left-0 w-1 bg-teal-400" />}
+                          <div className={`w-10 h-10 rounded-lg bg-black flex items-center justify-center text-xs font-bold shrink-0 overflow-hidden border transition-colors ${isActive ? 'border-teal-400/50 text-teal-400' : 'border-white/10 text-slate-400 group-hover:border-white/20'}`}>
                             {ch.logo ? <img src={ch.logo} alt="" className="w-full h-full object-cover" /> : ch.name.substring(0, 2).toUpperCase()}
                           </div>
                           <div className="flex-1 min-w-0 text-left">
-                            <div className={`truncate text-sm font-bold transition-colors ${isActive ? 'text-teal-400 drop-shadow-[0_0_8px_rgba(20,184,166,0.5)]' : 'text-slate-200 group-hover:text-white'}`}>{ch.name}</div>
+                            <div className={`truncate text-[13px] font-semibold transition-colors ${isActive ? 'text-teal-400' : 'text-slate-200 group-hover:text-white'}`}>{ch.name}</div>
                             <div className="truncate text-[10px] uppercase tracking-widest text-slate-500 mt-0.5 font-medium">{ch.group}</div>
                           </div>
                         </button>
@@ -347,26 +343,22 @@ export default function App() {
         <div className="flex-1 flex flex-col min-w-0 bg-black overflow-hidden relative z-10">
           <div className="w-full shrink-0 aspect-video md:aspect-auto md:flex-1 relative shadow-[0_10px_30px_rgba(0,0,0,0.8)] z-20">
             <div className="absolute inset-0">
-              <Player channel={activeChannel} onNext={handleNext} onPrev={handlePrev} />
+              <Player channel={activeChannel} />
             </div>
           </div>
           
           {/* Mobile panel takes up the rest of the height on phones */}
-          <div className="md:hidden flex-1 flex flex-col bg-slate-900 border-t border-slate-800 min-h-0 z-30">
-              <div className="flex p-1.5 gap-1 bg-slate-950/40 border-b border-slate-800 shadow-sm shrink-0">
-                <button onClick={() => setActiveTab('channels')} className={`flex-1 flex flex-col items-center gap-1 py-2 rounded-lg text-[10px] font-bold tracking-wide uppercase transition-colors ${activeTab === 'channels' ? 'bg-slate-800 text-teal-400 shadow' : 'text-slate-400 hover:text-white'}`}>
+          <div className="md:hidden flex-1 flex flex-col bg-[#0a0a0a] border-t border-white/5 min-h-0 z-30">
+              <div className="flex p-1.5 gap-1 bg-transparent border-b border-white/5 shadow-sm shrink-0">
+                <button onClick={() => setActiveTab('channels')} className={`flex-1 flex flex-col items-center gap-1 py-2 rounded-lg text-[10px] font-bold tracking-wide uppercase transition-colors ${activeTab === 'channels' ? 'bg-white/10 text-teal-400' : 'text-slate-400 hover:text-white'}`}>
                    <MonitorPlay className="w-4 h-4 mb-0.5" />
                    Channels
                 </button>
-                <button onClick={() => setActiveTab('info')} className={`flex-1 flex flex-col items-center gap-1 py-2 rounded-lg text-[10px] font-bold tracking-wide uppercase transition-colors ${activeTab === 'info' ? 'bg-slate-800 text-teal-400 shadow' : 'text-slate-400 hover:text-white'}`}>
-                   <Activity className="w-4 h-4 mb-0.5" />
-                   Info
-                </button>
-                <button onClick={() => setActiveTab('lists')} className={`flex-1 flex flex-col items-center gap-1 py-2 rounded-lg text-[10px] font-bold tracking-wide uppercase transition-colors ${activeTab === 'lists' ? 'bg-slate-800 text-teal-400 shadow' : 'text-slate-400 hover:text-white'}`}>
+                <button onClick={() => setActiveTab('lists')} className={`flex-1 flex flex-col items-center gap-1 py-2 rounded-lg text-[10px] font-bold tracking-wide uppercase transition-colors ${activeTab === 'lists' ? 'bg-white/10 text-teal-400' : 'text-slate-400 hover:text-white'}`}>
                    <ListVideo className="w-4 h-4 mb-0.5" />
                    Lists
                 </button>
-                <button onClick={() => setActiveTab('dev')} className={`flex-1 flex flex-col items-center gap-1 py-2 rounded-lg text-[10px] font-bold tracking-wide uppercase transition-colors ${activeTab === 'dev' ? 'bg-slate-800 text-teal-400 shadow' : 'text-slate-400 hover:text-white'}`}>
+                <button onClick={() => setActiveTab('dev')} className={`flex-1 flex flex-col items-center gap-1 py-2 rounded-lg text-[10px] font-bold tracking-wide uppercase transition-colors ${activeTab === 'dev' ? 'bg-white/10 text-teal-400' : 'text-slate-400 hover:text-white'}`}>
                    <Code className="w-4 h-4 mb-0.5" />
                    Dev
                 </button>
@@ -379,9 +371,9 @@ export default function App() {
                       <div className="p-2.5 shrink-0 flex gap-2">
                         <div className="relative flex-1">
                           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
-                          <input type="text" placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-full bg-slate-800/80 border border-slate-700 rounded-lg py-1.5 pl-8 pr-3 text-xs focus:outline-none focus:border-teal-500" />
+                          <input type="text" placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-lg py-1.5 pl-8 pr-3 text-xs focus:outline-none focus:border-teal-500/50" />
                         </div>
-                        <select value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)} className="w-1/3 bg-slate-800/80 border border-slate-700 rounded-lg py-1.5 px-2 text-xs focus:outline-none focus:border-teal-500 appearance-none">
+                        <select value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)} className="w-1/3 bg-white/5 border border-white/10 rounded-lg py-1.5 px-2 text-xs focus:outline-none focus:border-teal-500/50 appearance-none">
                           <option value="">All</option>
                           {groups.map(g => <option key={g} value={g}>{g}</option>)}
                         </select>
@@ -396,13 +388,13 @@ export default function App() {
                           filteredChannels.slice(0, 200).map(ch => {
                             const isActive = activeChannel?.uid === ch.uid;
                             return (
-                              <button key={ch.uid} onClick={() => handlePlay(ch)} className={`w-full flex items-center gap-3 p-2.5 rounded-2xl transition-all border relative overflow-hidden group ${isActive ? 'bg-gradient-to-r from-teal-500/10 to-transparent border-teal-500/40 shadow-[0_0_15px_rgba(20,184,166,0.1)]' : 'border-transparent hover:bg-white/5'}`}>
-                                {isActive && <div className="absolute inset-y-0 left-0 w-1 bg-teal-400 shadow-[0_0_10px_rgba(20,184,166,0.8)]" />}
-                                <div className={`w-10 h-10 rounded-full border shadow-inner bg-slate-900 flex items-center justify-center text-xs font-black shrink-0 overflow-hidden transition-colors ${isActive ? 'border-teal-400/50 text-teal-400 shadow-[0_0_10px_rgba(20,184,166,0.2)]' : 'border-slate-700/50 text-slate-400 group-hover:border-slate-500/50'}`}>
+                              <button key={ch.uid} onClick={() => handlePlay(ch)} className={`w-full flex items-center gap-3 p-2.5 rounded-xl transition-all border relative overflow-hidden group ${isActive ? 'bg-white/10 border-teal-500/20 shadow-sm' : 'border-transparent hover:bg-white/5'}`}>
+                                {isActive && <div className="absolute inset-y-0 left-0 w-1 bg-teal-400 shadow-sm" />}
+                                <div className={`w-10 h-10 rounded-lg border shadow-sm bg-black flex items-center justify-center text-xs font-bold shrink-0 overflow-hidden transition-colors ${isActive ? 'border-teal-400/50 text-teal-400' : 'border-white/10 text-slate-400 group-hover:border-white/20'}`}>
                                   {ch.logo ? <img src={ch.logo} alt="" className="w-full h-full object-cover" /> : ch.name.substring(0, 2).toUpperCase()}
                                 </div>
                                 <div className="flex-1 min-w-0 text-left">
-                                  <div className={`truncate text-sm font-bold transition-colors ${isActive ? 'text-teal-400 drop-shadow-[0_0_8px_rgba(20,184,166,0.5)]' : 'text-slate-200 group-hover:text-white'}`}>{ch.name}</div>
+                                  <div className={`truncate text-sm font-semibold transition-colors ${isActive ? 'text-teal-400' : 'text-slate-200 group-hover:text-white'}`}>{ch.name}</div>
                                   <div className="truncate text-[10px] uppercase tracking-widest text-slate-500 mt-0.5 font-medium leading-tight">{ch.group}</div>
                                 </div>
                               </button>
@@ -412,63 +404,6 @@ export default function App() {
                         {filteredChannels.length > 200 && <div className="text-center text-xs text-slate-500 p-2">Search to see more...</div>}
                       </div>
                     </div>
-                  )}
-
-                  {/* Mobile Info */}
-                  {activeTab === 'info' && (
-                     <div className="p-4 space-y-4">
-                       <h3 className="text-xs font-black tracking-widest text-slate-400 uppercase mb-4 flex items-center gap-2">
-                         <Activity className="w-4 h-4 text-teal-500" /> NOW PLAYING
-                       </h3>
-                       {activeChannel ? (
-                         <div className="flex flex-col gap-4 animate-in fade-in">
-                           <div className="bg-slate-800/40 p-4 rounded-xl border border-slate-700/50 group">
-                             <div className="flex justify-between items-start mb-2">
-                               <div className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Channel ID</div>
-                               <span className="text-[10px] font-mono text-teal-400 bg-teal-500/10 px-1.5 py-0.5 rounded border border-teal-500/20">{activeChannel.uid.substring(0,6)}</span>
-                             </div>
-                             <div className="font-bold text-white text-lg leading-tight">{activeChannel.name}</div>
-                             <div className="text-xs text-amber-500 font-bold tracking-wide mt-1">{activeChannel.group}</div>
-                           </div>
-                           
-                           {/* Broadcast Monitor Data Feed Grid */}
-                           <div className="grid grid-cols-2 gap-3">
-                             <div className="bg-slate-950/50 p-3 rounded-xl border border-slate-800/80 flex flex-col justify-between relative overflow-hidden">
-                               <div className="absolute -top-1 -right-1 p-2 opacity-5"><Activity className="w-12 h-12" /></div>
-                               <div className="text-[9px] uppercase tracking-widest text-slate-500 font-bold mb-2">Video Res</div>
-                               <div className="font-mono text-white text-sm font-bold">1080p<span className="text-[10px] text-teal-400 ml-1">FHD</span></div>
-                             </div>
-                             <div className="bg-slate-950/50 p-3 rounded-xl border border-slate-800/80 flex flex-col justify-between relative overflow-hidden">
-                               <div className="absolute -top-1 -right-1 p-2 opacity-5"><RefreshCw className="w-12 h-12" /></div>
-                               <div className="text-[9px] uppercase tracking-widest text-slate-500 font-bold mb-2">Framerate</div>
-                               <div className="font-mono text-white text-sm font-bold">60<span className="text-[10px] text-teal-400 ml-1">FPS</span></div>
-                             </div>
-                             <div className="bg-slate-950/50 p-3 rounded-xl border border-slate-800/80 flex flex-col justify-between relative overflow-hidden">
-                               <div className="absolute -top-1 -right-1 p-2 opacity-5"><MonitorPlay className="w-12 h-12" /></div>
-                               <div className="text-[9px] uppercase tracking-widest text-slate-500 font-bold mb-2">Bitrate</div>
-                               <div className="font-mono text-white text-sm font-bold">4.2<span className="text-[10px] text-amber-500 ml-1">Mbps</span></div>
-                             </div>
-                             <div className="bg-slate-950/50 p-3 rounded-xl border border-slate-800/80 flex flex-col justify-between relative overflow-hidden">
-                               <div className="absolute -top-1 -right-1 p-2 opacity-5"><Code className="w-12 h-12" /></div>
-                               <div className="text-[9px] uppercase tracking-widest text-slate-500 font-bold mb-2">Codec</div>
-                               <div className="font-mono text-white text-sm font-bold">H.264<span className="text-[10px] text-slate-500 ml-1">AVC</span></div>
-                             </div>
-                           </div>
-                           
-                           <div className="bg-slate-950/80 p-3 rounded-lg border border-slate-800 mt-2">
-                             <div className="text-[9px] uppercase tracking-widest text-slate-500 font-bold mb-1">Stream Feed (Encrypted)</div>
-                             <div className="text-[10px] text-slate-400/80 break-all font-mono line-clamp-2">{activeChannel.url}</div>
-                           </div>
-                         </div>
-                       ) : (
-                         <div className="flex-1 flex flex-col items-center justify-center text-center opacity-50 py-10">
-                           <div className="w-16 h-16 rounded-full bg-slate-800 flex items-center justify-center mb-4">
-                             <Tv className="w-8 h-8 text-slate-500" />
-                           </div>
-                           <p className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-2">No Signal</p>
-                         </div>
-                       )}
-                     </div>
                   )}
 
                   {/* Mobile Lists... */}
@@ -548,96 +483,7 @@ export default function App() {
 
           </div>
 
-        {/* Right Info Panel / Drawer */}
-        <aside className={`
-          flex flex-col w-80 bg-slate-950 border-l border-slate-800/80 shrink-0
-          fixed lg:relative inset-y-0 right-0 z-50 transform transition-transform duration-300 ease-in-out shadow-[-10px_0_30px_rgba(0,0,0,0.5)]
-          ${rightDrawerOpen ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'}
-          hidden md:flex lg:flex
-        `}>
-          <div className="flex items-center justify-between p-4 border-b border-slate-800/80 lg:hidden shrink-0">
-            <h3 className="text-xs font-black tracking-widest text-slate-400 uppercase">Stream Info</h3>
-            <button onClick={() => setRightDrawerOpen(false)} className="p-1.5 hover:bg-slate-800 rounded-full text-slate-400">
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-          <div className="p-6 flex-1 flex flex-col overflow-y-auto">
-            <h3 className="text-xs font-black tracking-widest text-slate-400 uppercase mb-6 flex items-center gap-2">
-              <Activity className="w-4 h-4 text-teal-500" /> NOW PLAYING
-            </h3>
-            {activeChannel ? (
-              <div className="flex flex-col gap-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                <div className="w-full aspect-square rounded-2xl bg-slate-950/50 border border-slate-800/80 flex items-center justify-center overflow-hidden p-6 relative group mb-2 shadow-inner">
-                  <div className="absolute inset-0 bg-gradient-to-t from-slate-900/80 to-transparent z-10" />
-                  {activeChannel.logo ? (
-                    <img src={activeChannel.logo} alt="" className="w-full h-full object-contain drop-shadow-2xl relative z-20 group-hover:scale-105 transition-transform duration-500" />
-                  ) : (
-                    <div className="relative z-20 w-28 h-28 sm:w-32 sm:h-32 rounded-full flex items-center justify-center bg-slate-900 border border-slate-800 shadow-[0_0_30px_rgba(20,184,166,0.05)] group-hover:shadow-[0_0_30px_rgba(20,184,166,0.15)] transition-all duration-700">
-                      <div className="absolute inset-0 rounded-full border-t-2 border-teal-500/50 animate-spin" style={{ animationDuration: '4s' }} />
-                      <div className="absolute inset-2 sm:inset-3 rounded-full border-b-2 border-amber-500/30 animate-spin" style={{ animationDuration: '3s', animationDirection: 'reverse' }} />
-                      <div className="absolute inset-0 flex items-center justify-center gap-1 sm:gap-1.5 opacity-50">
-                        <div className="w-1.5 h-4 sm:h-6 bg-slate-500 rounded-full animate-[bounce_1s_infinite]" style={{ animationDelay: '0ms' }} />
-                        <div className="w-1.5 h-8 sm:h-12 bg-slate-400 rounded-full animate-[bounce_1.2s_infinite]" style={{ animationDelay: '150ms' }} />
-                        <div className="w-1.5 h-12 sm:h-16 bg-teal-500 rounded-full animate-[bounce_0.9s_infinite]" style={{ animationDelay: '300ms' }} />
-                        <div className="w-1.5 h-7 sm:h-10 bg-slate-400 rounded-full animate-[bounce_1.1s_infinite]" style={{ animationDelay: '450ms' }} />
-                        <div className="w-1.5 h-5 sm:h-8 bg-slate-500 rounded-full animate-[bounce_1.3s_infinite]" style={{ animationDelay: '600ms' }} />
-                      </div>
-                    </div>
-                  )}
-                  <div className="absolute top-4 right-4 z-20 flex items-center gap-2 bg-black/40 backdrop-blur-md px-2.5 py-1 rounded-full border border-white/10 shadow-[0_0_10px_rgba(0,0,0,0.5)]">
-                    <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse shadow-[0_0_10px_rgba(239,68,68,0.8)]" />
-                    <span className="text-[10px] font-bold text-white tracking-widest leading-none">LIVE</span>
-                  </div>
-                </div>
-                
-                <div className="bg-slate-800/40 p-4 rounded-xl border border-slate-700/50 hover:border-teal-500/30 transition-colors group">
-                  <div className="flex justify-between items-start mb-2">
-                    <div className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Channel ID</div>
-                    <span className="text-[10px] font-mono text-teal-400 bg-teal-500/10 px-1.5 py-0.5 rounded border border-teal-500/20">{activeChannel.uid.substring(0,6)}</span>
-                  </div>
-                  <div className="font-bold text-white text-lg leading-tight group-hover:text-teal-400 transition-colors">{activeChannel.name}</div>
-                  <div className="text-xs text-amber-500 font-bold tracking-wide mt-1">{activeChannel.group}</div>
-                </div>
 
-                {/* Broadcast Monitor Data Feed Grid */}
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="bg-slate-950/50 p-3 rounded-xl border border-slate-800/80 flex flex-col justify-between relative overflow-hidden">
-                    <div className="absolute -top-1 -right-1 p-2 opacity-5"><Activity className="w-12 h-12" /></div>
-                    <div className="text-[9px] uppercase tracking-widest text-slate-500 font-bold mb-2">Video Res</div>
-                    <div className="font-mono text-white text-sm font-bold">1080p<span className="text-[10px] text-teal-400 ml-1">FHD</span></div>
-                  </div>
-                  <div className="bg-slate-950/50 p-3 rounded-xl border border-slate-800/80 flex flex-col justify-between relative overflow-hidden">
-                    <div className="absolute -top-1 -right-1 p-2 opacity-5"><RefreshCw className="w-12 h-12" /></div>
-                    <div className="text-[9px] uppercase tracking-widest text-slate-500 font-bold mb-2">Framerate</div>
-                    <div className="font-mono text-white text-sm font-bold">60<span className="text-[10px] text-teal-400 ml-1">FPS</span></div>
-                  </div>
-                  <div className="bg-slate-950/50 p-3 rounded-xl border border-slate-800/80 flex flex-col justify-between relative overflow-hidden">
-                    <div className="absolute -top-1 -right-1 p-2 opacity-5"><MonitorPlay className="w-12 h-12" /></div>
-                    <div className="text-[9px] uppercase tracking-widest text-slate-500 font-bold mb-2">Bitrate</div>
-                    <div className="font-mono text-white text-sm font-bold">4.2<span className="text-[10px] text-amber-500 ml-1">Mbps</span></div>
-                  </div>
-                  <div className="bg-slate-950/50 p-3 rounded-xl border border-slate-800/80 flex flex-col justify-between relative overflow-hidden">
-                    <div className="absolute -top-1 -right-1 p-2 opacity-5"><Code className="w-12 h-12" /></div>
-                    <div className="text-[9px] uppercase tracking-widest text-slate-500 font-bold mb-2">Codec</div>
-                    <div className="font-mono text-white text-sm font-bold">H.264<span className="text-[10px] text-slate-500 ml-1">AVC</span></div>
-                  </div>
-                </div>
-                
-                <div className="bg-slate-950/80 p-3 rounded-lg border border-slate-800 mt-2">
-                  <div className="text-[9px] uppercase tracking-widest text-slate-500 font-bold mb-1">Stream Feed (Encrypted)</div>
-                  <div className="text-[10px] text-slate-400/80 break-all font-mono line-clamp-2">{activeChannel.url}</div>
-                </div>
-              </div>
-            ) : (
-              <div className="flex-1 flex items-center justify-center border-2 border-dashed border-slate-800 rounded-3xl text-slate-500 text-sm font-medium">
-                <div className="flex flex-col items-center gap-3">
-                  <MonitorPlay className="w-10 h-10 opacity-20" />
-                  <span className="opacity-60">No active stream</span>
-                </div>
-              </div>
-            )}
-          </div>
-        </aside>
       </main>
 
       {/* Add Playlist Modal */}
