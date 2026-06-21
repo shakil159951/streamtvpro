@@ -8,7 +8,7 @@ import {
   Trash2, X, MonitorPlay, ExternalLink, Activity
 } from 'lucide-react';
 
-const APP_NOTICE = "Welcome to STREAM TV PRO. Enjoy the best premium broadcast experience. High-definition sports channels and premium content updated daily. ⚡";
+const APP_NOTICE = "আপনার প্রিমিয়াম বিনোদনের ঠিকানা STREAM TV PRO। উপভোগ করুন উচ্চমানের লাইভ টিভি, স্পোর্টস ও জনপ্রিয় চ্যানেলসমূহ। দ্রুত, নিরবচ্ছিন্ন ও আধুনিক স্ট্রিমিং অভিজ্ঞতা।";
 
 export default function App() {
   const [playlists, setPlaylists] = useState<Playlist[]>(() => getPlaylists());
