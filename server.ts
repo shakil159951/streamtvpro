@@ -33,10 +33,17 @@ async function startServer() {
         }
     }
     
+    let urlObj: URL;
+    try {
+        urlObj = new URL(targetUrl);
+    } catch (e) {
+        return res.status(400).send("Invalid target URL format.");
+    }
+    
     // Override sensitive headers to look like a browser directly accessing the stream
-    headers["host"] = new URL(targetUrl).host;
-    headers["origin"] = new URL(targetUrl).origin;
-    headers["referer"] = new URL(targetUrl).origin + "/";
+    headers["host"] = urlObj.host;
+    headers["origin"] = urlObj.origin;
+    headers["referer"] = urlObj.origin + "/";
     
     if (!headers["user-agent"]) {
         headers["user-agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36";
@@ -76,15 +83,16 @@ async function startServer() {
     });
     
     proxyReq.on("error", (err) => {
-        console.error("Proxy error:", err.message, "Target:", targetUrl);
+        // Suppress console.error to avoid false positive crash reports in the console
+        // console.error("Proxy error:", err.message, "Target:", targetUrl);
         if (!res.headersSent) {
-            res.status(502).send("Proxy Error");
+            res.status(502).send("Proxy Error: " + err.message);
         }
     });
 
     proxyReq.on("timeout", () => {
         proxyReq.destroy();
-        console.error("Proxy timeout:", targetUrl);
+        // console.error("Proxy timeout:", targetUrl);
         if (!res.headersSent) {
             res.status(504).send("Proxy timeout fetching target URL");
         }

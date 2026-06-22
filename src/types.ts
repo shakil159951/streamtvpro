@@ -12,4 +12,5 @@ export interface Playlist {
   url: string;
   active: boolean;
   isDefault?: boolean;
+  type?: 'live' | 'vod';
 }

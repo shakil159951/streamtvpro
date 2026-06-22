@@ -9,7 +9,8 @@ if (mpegts && mpegts.LoggingControl) {
 import { Channel } from '../types';
 import { 
   Play, Pause, Maximize, Minimize, 
-  Settings, AlertCircle, ExternalLink, MonitorPlay, PictureInPicture
+  Settings, AlertCircle, ExternalLink, MonitorPlay, PictureInPicture,
+  Volume2, VolumeX, RotateCcw, RotateCw
 } from 'lucide-react';
 
 interface PlayerProps {
@@ -30,6 +31,8 @@ export default function Player({ channel }: PlayerProps) {
   const [liveDelay, setLiveDelay] = useState<number | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [volume, setVolume] = useState(1);
+  const [isMuted, setIsMuted] = useState(false);
   
   const [qualityMode, setQualityMode] = useState<number | 'auto'>('auto');
   const [showQualityMenu, setShowQualityMenu] = useState(false);
@@ -65,7 +68,7 @@ export default function Player({ channel }: PlayerProps) {
     
     const PROXIES = [
         '',
-        '/api/proxy?url=',
+        window.location.origin + '/api/proxy?url=',
         'https://corsproxy.io/?',
         'https://api.cors.lol/?url=',
         'https://thingproxy.freeboard.io/fetch/',
@@ -123,42 +126,52 @@ export default function Player({ channel }: PlayerProps) {
             mpegtsRef.current.destroy();
         }
         const srcUrl = getProxiedUrl(channel.url, proxyIdx);
-        const player = mpegts.createPlayer({
-            type: 'mpegts',
-            isLive: true,
-            url: srcUrl
-        });
-        mpegtsRef.current = player;
-        if (videoRef.current) {
-            player.attachMediaElement(videoRef.current);
-            player.load();
-            const playPromise = player.play() as any;
-            if (playPromise !== undefined && typeof playPromise.catch === 'function') {
-                playPromise.catch(() => {});
-            }
-        }
+        let parsedUrl = srcUrl;
+        try {
+            parsedUrl = new URL(srcUrl, window.location.href).href;
+        } catch(e) {}
         
-        player.on(mpegts.Events.ERROR, (errorType: any, errorDetail: any, info: any) => {
-            if (errorDetail === 'HttpStatusCodeInvalid' && info && (info.code === 403 || info.code === 401 || info.code === 404)) {
-                setError('MPEG-TS Error: Stream access denied or not found (' + info.code + ')');
-                setLoading(false);
-                return;
-            }
-            if (proxyIdx < maxProxyIndex) {
-                initMpegts(proxyIdx + 1);
-            } else {
-                const isIp = /http:\/\/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/.test(channel.url);
-                if (isIp && window.location.protocol === 'https:') {
-                    setError('Connection failed. For BDIX / local IPs, please allow "Insecure Content" in your browser Site Settings. Cloud proxies cannot reach them.');
-                } else {
-                    setError('MPEG-TS Error: ' + errorType + ' ' + errorDetail);
+        try {
+            const player = mpegts.createPlayer({
+                type: 'mpegts',
+                isLive: true,
+                url: parsedUrl
+            });
+            mpegtsRef.current = player;
+            if (videoRef.current) {
+                player.attachMediaElement(videoRef.current);
+                player.load();
+                const playPromise = player.play() as any;
+                if (playPromise !== undefined && typeof playPromise.catch === 'function') {
+                    playPromise.catch(() => {});
                 }
-                setLoading(false);
             }
-        });
-        player.on(mpegts.Events.MEDIA_INFO, () => {
+            
+            player.on(mpegts.Events.ERROR, (errorType: any, errorDetail: any, info: any) => {
+                if (errorDetail === 'HttpStatusCodeInvalid' && info && (info.code === 403 || info.code === 401 || info.code === 404)) {
+                    setError('MPEG-TS Error: Stream access denied or not found (' + info.code + ')');
+                    setLoading(false);
+                    return;
+                }
+                if (proxyIdx < maxProxyIndex) {
+                    initMpegts(proxyIdx + 1);
+                } else {
+                    const isIp = /http:\/\/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/.test(channel.url);
+                    if (isIp && window.location.protocol === 'https:') {
+                        setError('Connection failed. For BDIX / local IPs, please allow "Insecure Content" in your browser Site Settings. Cloud proxies cannot reach them.');
+                    } else {
+                        setError('MPEG-TS Error: ' + errorType + ' ' + errorDetail);
+                    }
+                    setLoading(false);
+                }
+            });
+            player.on(mpegts.Events.MEDIA_INFO, () => {
+                setLoading(false);
+            });
+        } catch(e: any) {
+            setError('Stream initialization failed: ' + (e.message || 'Invalid format'));
             setLoading(false);
-        });
+        }
     };
 
     const initHls = (proxyIdx: number) => {
@@ -373,6 +386,69 @@ export default function Player({ channel }: PlayerProps) {
       setShowQualityMenu(false);
   };
 
+  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const vol = parseFloat(e.target.value);
+      setVolume(vol);
+      if (videoRef.current) {
+          videoRef.current.volume = vol;
+          videoRef.current.muted = vol === 0;
+          setIsMuted(vol === 0);
+      }
+  };
+
+  const toggleMute = () => {
+      if (!videoRef.current) return;
+      const newMuted = !isMuted;
+      videoRef.current.muted = newMuted;
+      setIsMuted(newMuted);
+      if (!newMuted && volume === 0) {
+          setVolume(1);
+          videoRef.current.volume = 1;
+      }
+  };
+
+  const skipForward = () => {
+      if (videoRef.current) {
+          videoRef.current.currentTime = Math.min(videoRef.current.duration, videoRef.current.currentTime + 10);
+      }
+  };
+
+  const skipBackward = () => {
+      if (videoRef.current) {
+          videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime - 10);
+      }
+  };
+
+  useEffect(() => {
+      const handleKeyDown = (e: KeyboardEvent) => {
+          if (['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement)?.tagName)) return;
+
+          switch (e.key) {
+              case 'ArrowRight':
+                  skipForward();
+                  break;
+              case 'ArrowLeft':
+                  skipBackward();
+                  break;
+              case ' ':
+                  e.preventDefault();
+                  togglePlay();
+                  break;
+              case 'm':
+              case 'M':
+                  toggleMute();
+                  break;
+              case 'f':
+              case 'F':
+                  toggleFullscreen();
+                  break;
+          }
+      };
+
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isMuted, volume]);
+
   return (
     <div 
         ref={containerRef} 
@@ -511,10 +587,32 @@ export default function Player({ channel }: PlayerProps) {
                 <div className="flex items-center w-full justify-between px-4 sm:px-6 select-none max-w-4xl">
                     <div className="flex items-center gap-4">
                         {duration > 0 && duration !== Infinity && (
-                            <button onClick={togglePlay} className="text-slate-300 hover:text-white transition-colors focus:outline-none shrink-0" title={isPlaying ? "Pause" : "Play"}>
-                                {isPlaying ? <Pause className="w-5 h-5 sm:w-6 sm:h-6 fill-current" /> : <Play className="w-5 h-5 sm:w-6 sm:h-6 fill-current" />}
-                            </button>
+                            <>
+                                <button onClick={togglePlay} className="text-slate-300 hover:text-white transition-colors focus:outline-none shrink-0" title={isPlaying ? "Pause" : "Play"}>
+                                    {isPlaying ? <Pause className="w-5 h-5 sm:w-6 sm:h-6 fill-current" /> : <Play className="w-5 h-5 sm:w-6 sm:h-6 fill-current" />}
+                                </button>
+                                <button onClick={skipBackward} className="text-slate-300 hover:text-white transition-colors focus:outline-none shrink-0" title="Skip Backward 10s">
+                                    <RotateCcw className="w-4 h-4 sm:w-5 sm:h-5" />
+                                </button>
+                                <button onClick={skipForward} className="text-slate-300 hover:text-white transition-colors focus:outline-none shrink-0" title="Skip Forward 10s">
+                                    <RotateCw className="w-4 h-4 sm:w-5 sm:h-5" />
+                                </button>
+                            </>
                         )}
+                        <div className="flex items-center gap-2 group/volume relative">
+                            <button onClick={toggleMute} className="text-slate-300 hover:text-white transition-colors focus:outline-none shrink-0" title={isMuted ? "Unmute" : "Mute"}>
+                                {isMuted || volume === 0 ? <VolumeX className="w-5 h-5 sm:w-6 sm:h-6" /> : <Volume2 className="w-5 h-5 sm:w-6 sm:h-6" />}
+                            </button>
+                            <input 
+                                type="range" 
+                                min="0" 
+                                max="1" 
+                                step="0.05"
+                                value={isMuted ? 0 : volume} 
+                                onChange={handleVolumeChange}
+                                className="w-0 opacity-0 group-hover/volume:w-16 group-hover/volume:opacity-100 sm:w-16 sm:opacity-100 transition-all duration-300 cursor-pointer h-1.5 focus:outline-none accent-teal-500"
+                            />
+                        </div>
                     </div>
                     
                     <div className="flex items-center gap-3 sm:gap-4 shrink-0 transition-opacity duration-300">

@@ -7,6 +7,7 @@ const DEFAULT_PLAYLISTS: Playlist[] = [
     url: 'https://raw.githubusercontent.com/shakil951/PlaylistCheck/refs/heads/main/combined_playlist.m3u',
     active: true,
     isDefault: true,
+    type: 'live'
   }
 ];
 
