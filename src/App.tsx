@@ -13,7 +13,7 @@ import {
 const APP_NOTICE = "Welcome to STREAM TV PRO. Enjoy the best premium broadcast experience. High-definition sports channels and premium content updated daily. ⚡";
 
 export default function App() {
-  const isRouteAdmin = window.location.pathname === '/admin';
+  const isRouteAdmin = window.location.pathname.includes('/admin') || window.location.search.includes('admin=true') || window.location.hash.includes('admin');
   const [isAdmin, setIsAdmin] = useState(() => localStorage.getItem('is_admin') === 'true');
 
   useEffect(() => {
@@ -66,6 +66,8 @@ export default function App() {
   const [seriesList, setSeriesList] = useState<XtreamSeries[]>([]);
   const [isLoadingVod, setIsLoadingVod] = useState(false);
   const [xtreamError, setXtreamError] = useState('');
+  
+  const [customJsonInput, setCustomJsonInput] = useState(() => localStorage.getItem('custom_json_config') || '');
 
   // Direct Link
   const [directName, setDirectName] = useState('');
@@ -489,13 +491,13 @@ export default function App() {
             <button onClick={() => setActiveTab('vod')} className={`flex-1 min-w-[70px] flex flex-col items-center gap-1.5 p-2 rounded-lg text-[10px] sm:text-xs font-semibold transition-colors ${activeTab === 'vod' ? 'bg-white/10 text-teal-400' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
               <Film className="w-4 h-4" /> VOD
             </button>
+            <button onClick={() => setActiveTab('dev')} className={`flex-1 min-w-[70px] flex flex-col items-center gap-1.5 p-2 rounded-lg text-[10px] sm:text-xs font-semibold transition-colors ${activeTab === 'dev' ? 'bg-white/10 text-teal-400' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
+              <Code className="w-4 h-4" /> Dev
+            </button>
             {isRouteAdmin && isAdmin && (
               <>
                 <button onClick={() => setActiveTab('lists')} className={`flex-1 min-w-[70px] flex flex-col items-center gap-1.5 p-2 rounded-lg text-[10px] sm:text-xs font-semibold transition-colors ${activeTab === 'lists' ? 'bg-white/10 text-teal-400' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
                   <ListVideo className="w-4 h-4" /> Playlists
-                </button>
-                <button onClick={() => setActiveTab('dev')} className={`flex-1 min-w-[70px] flex flex-col items-center gap-1.5 p-2 rounded-lg text-[10px] sm:text-xs font-semibold transition-colors ${activeTab === 'dev' ? 'bg-white/10 text-teal-400' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
-                  <Code className="w-4 h-4" /> Dev
                 </button>
                 <button onClick={() => setActiveTab('setup')} className={`flex-1 min-w-[70px] flex flex-col items-center gap-1.5 p-2 rounded-lg text-[10px] sm:text-xs font-semibold transition-colors ${activeTab === 'setup' ? 'bg-white/10 text-teal-400' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
                   <Settings className="w-4 h-4" /> Setup
@@ -667,28 +669,49 @@ export default function App() {
                   <div className="border-t border-slate-800 my-2 pt-4">
                     <div className="flex items-center justify-between mb-1.5 ml-1">
                       <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest">Or Paste JSON Directly</label>
-                      <button 
-                        onClick={() => {
-                          const area = document.getElementById('json-paste-area') as HTMLTextAreaElement;
-                          if (area) {
-                            area.value = `{\n  "app_notice": "Your notice...",\n  "xtream": {\n    "url": "http://...",\n    "username": "...",\n    "password": "..."\n  },\n  "playlists": [\n    {\n      "name": "Live TV",\n      "url": "https://.../playlist.m3u",\n      "type": "live"\n    }\n  ]\n}`;
-                          }
-                        }}
-                        className="text-[10px] bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded"
-                      >
-                        Load Example JSON
-                      </button>
+                      <div className="flex gap-2">
+                        <button 
+                          onClick={() => {
+                            const data = {
+                              app_notice: appNotice,
+                              xtream: {
+                                url: xtreamUrl,
+                                username: xtreamUser,
+                                password: xtreamPass
+                              },
+                              playlists: playlists.filter(p => !p.id.startsWith('remote_')).map(p => ({
+                                name: p.name,
+                                url: p.url,
+                                type: p.type
+                              }))
+                            };
+                            setCustomJsonInput(JSON.stringify(data, null, 2));
+                          }}
+                          className="text-[10px] bg-teal-600 hover:bg-teal-500 text-white px-2 py-1 rounded"
+                        >
+                          Show Current JSON
+                        </button>
+                        <button 
+                          onClick={() => {
+                            setCustomJsonInput(`{\n  "app_notice": "Your notice...",\n  "xtream": {\n    "url": "http://...",\n    "username": "...",\n    "password": "..."\n  },\n  "playlists": [\n    {\n      "name": "Live TV",\n      "url": "https://.../playlist.m3u",\n      "type": "live"\n    }\n  ]\n}`);
+                          }}
+                          className="text-[10px] bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded"
+                        >
+                          Load Example
+                        </button>
+                      </div>
                     </div>
                     <textarea 
                       id="json-paste-area"
+                      value={customJsonInput}
+                      onChange={(e) => setCustomJsonInput(e.target.value)}
                       className="w-full h-40 bg-slate-800/80 border border-slate-700/50 rounded-xl py-3 px-4 focus:outline-none focus:border-teal-500 transition-colors text-white font-mono text-[10px] sm:text-xs placeholder:text-slate-600 resize-none"
                       placeholder="Paste your JSON configuration block here..."
-                      defaultValue={localStorage.getItem('custom_json_config') || ''}
                     ></textarea>
                     <button 
                       onClick={() => {
                         try {
-                          const val = (document.getElementById('json-paste-area') as HTMLTextAreaElement).value;
+                          const val = customJsonInput;
                           let data;
                           try {
                             data = JSON.parse(val);
@@ -792,12 +815,12 @@ export default function App() {
                    <Film className="w-4 h-4 mb-0.5" />
                    VOD
                 </button>
+                <button onClick={() => setActiveTab('dev')} className={`flex-1 min-w-[60px] flex flex-col items-center gap-1 py-1 rounded-lg text-[10px] font-bold tracking-wide uppercase transition-colors ${activeTab === 'dev' ? 'bg-white/10 text-teal-400' : 'text-slate-400 hover:text-white'}`}>
+                   <Code className="w-4 h-4 mb-0.5" />
+                   Dev
+                </button>
                 {isRouteAdmin && isAdmin && (
                   <>
-                    <button onClick={() => setActiveTab('dev')} className={`flex-1 min-w-[60px] flex flex-col items-center gap-1 py-1 rounded-lg text-[10px] font-bold tracking-wide uppercase transition-colors ${activeTab === 'dev' ? 'bg-white/10 text-teal-400' : 'text-slate-400 hover:text-white'}`}>
-                       <Code className="w-4 h-4 mb-0.5" />
-                       Dev
-                    </button>
                     <button onClick={() => setActiveTab('lists')} className={`flex-1 min-w-[60px] flex flex-col items-center gap-1 py-1 rounded-lg text-[10px] font-bold tracking-wide uppercase transition-colors ${activeTab === 'lists' ? 'bg-white/10 text-teal-400' : 'text-slate-400 hover:text-white'}`}>
                        <ListVideo className="w-4 h-4 mb-0.5" />
                        Lists
@@ -951,28 +974,49 @@ export default function App() {
                         <div className="border-t border-slate-800 my-2 pt-4">
                           <div className="flex items-center justify-between mb-1.5 ml-1">
                             <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest">Or Paste JSON Directly</label>
-                            <button 
-                              onClick={() => {
-                                const area = document.getElementById('mobile-json-paste-area') as HTMLTextAreaElement;
-                                if (area) {
-                                  area.value = `{\n  "app_notice": "Your notice...",\n  "xtream": {\n    "url": "http://...",\n    "username": "...",\n    "password": "..."\n  },\n  "playlists": [\n    {\n      "name": "Live TV",\n      "url": "https://.../playlist.m3u",\n      "type": "live"\n    }\n  ]\n}`;
-                                }
-                              }}
-                              className="text-[10px] bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded"
-                            >
-                              Load Example JSON
-                            </button>
+                            <div className="flex gap-2">
+                              <button 
+                                onClick={() => {
+                                  const data = {
+                                    app_notice: appNotice,
+                                    xtream: {
+                                      url: xtreamUrl,
+                                      username: xtreamUser,
+                                      password: xtreamPass
+                                    },
+                                    playlists: playlists.filter(p => !p.id.startsWith('remote_')).map(p => ({
+                                      name: p.name,
+                                      url: p.url,
+                                      type: p.type
+                                    }))
+                                  };
+                                  setCustomJsonInput(JSON.stringify(data, null, 2));
+                                }}
+                                className="text-[10px] bg-teal-600 hover:bg-teal-500 text-white px-2 py-1 rounded"
+                              >
+                                Show Current JSON
+                              </button>
+                              <button 
+                                onClick={() => {
+                                  setCustomJsonInput(`{\n  "app_notice": "Your notice...",\n  "xtream": {\n    "url": "http://...",\n    "username": "...",\n    "password": "..."\n  },\n  "playlists": [\n    {\n      "name": "Live TV",\n      "url": "https://.../playlist.m3u",\n      "type": "live"\n    }\n  ]\n}`);
+                                }}
+                                className="text-[10px] bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded"
+                              >
+                                Load Example
+                              </button>
+                            </div>
                           </div>
                           <textarea 
                             id="mobile-json-paste-area"
+                            value={customJsonInput}
+                            onChange={(e) => setCustomJsonInput(e.target.value)}
                             className="w-full h-40 bg-slate-800/80 border border-slate-700/50 rounded-xl py-3 px-4 focus:outline-none focus:border-teal-500 transition-colors text-white font-mono text-[10px] sm:text-xs placeholder:text-slate-600 resize-none"
                             placeholder="Paste your JSON configuration block here..."
-                            defaultValue={localStorage.getItem('custom_json_config') || ''}
                           ></textarea>
                           <button 
                             onClick={() => {
                               try {
-                                const val = (document.getElementById('mobile-json-paste-area') as HTMLTextAreaElement).value;
+                                const val = customJsonInput;
                                 let data;
                                 try {
                                   data = JSON.parse(val);
