@@ -4,6 +4,7 @@ import { Channel, Playlist } from './types';
 import { getPlaylists, savePlaylists } from './lib/storage';
 import { parseM3U } from './lib/m3u';
 import { XtreamApi, XtreamVod, XtreamSeries } from './lib/xtream';
+import { subscribeToConfig, updateConfig } from './lib/firebase';
 import { 
   Tv, Code, ListVideo, Search, Plus, PlayCircle, RefreshCw, 
   Trash2, X, MonitorPlay, ExternalLink, Activity, Film, Clapperboard, FolderOpen, Settings
@@ -12,25 +13,20 @@ import {
 const APP_NOTICE = "Welcome to STREAM TV PRO. Enjoy the best premium broadcast experience. High-definition sports channels and premium content updated daily. ⚡";
 
 export default function App() {
+  const isRouteAdmin = window.location.pathname === '/admin';
   const [isAdmin, setIsAdmin] = useState(() => localStorage.getItem('is_admin') === 'true');
-  const [adminClickCount, setAdminClickCount] = useState(0);
 
-  const handleTitleClick = () => {
-    if (isAdmin) return;
-    const newCount = adminClickCount + 1;
-    setAdminClickCount(newCount);
-    if (newCount >= 5) {
+  useEffect(() => {
+    if (isRouteAdmin && !isAdmin) {
       const pwd = prompt("Enter Admin Password:");
-      if (pwd === "admin123") {
+      if (pwd === "shakil10") {
         setIsAdmin(true);
         localStorage.setItem('is_admin', 'true');
-        alert("Admin Mode Unlocked!");
       } else {
-        setAdminClickCount(0);
-        alert("Incorrect Password!");
+        window.location.href = '/';
       }
     }
-  };
+  }, [isRouteAdmin, isAdmin]);
 
   const [playlists, setPlaylists] = useState<Playlist[]>(() => getPlaylists());
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -49,10 +45,6 @@ export default function App() {
   
   // Backend Sync
   const [hasSyncRan, setHasSyncRan] = useState(false);
-  const [backendApiUrl, setBackendApiUrl] = useState(() => {
-    if (localStorage.getItem('custom_json_config')) return '';
-    return localStorage.getItem('backend_api_url') || (window.location.origin + '/config.json');
-  });
   const [backendSyncing, setBackendSyncing] = useState(false);
   const [backendError, setBackendError] = useState('');
 
@@ -164,54 +156,64 @@ export default function App() {
     setActiveTab(newPlType === 'vod' ? 'vod' : 'channels');
   };
 
+  const handleFirebaseData = (data: any) => {
+    if (data.app_notice) {
+      setAppNotice(data.app_notice);
+      localStorage.setItem('app_notice', data.app_notice);
+    }
+    
+    if (data.xtream) {
+      setXtreamUrl(data.xtream.url || '');
+      setXtreamUser(data.xtream.username || '');
+      setXtreamPass(data.xtream.password || '');
+      setXtreamConfigured(true);
+      localStorage.setItem('xtream_url', data.xtream.url || '');
+      localStorage.setItem('xtream_user', data.xtream.username || '');
+      localStorage.setItem('xtream_pass', data.xtream.password || '');
+    }
+    
+    if (data.playlists && Array.isArray(data.playlists)) {
+      const currentPls = getPlaylists().filter(p => !p.id.startsWith('remote_'));
+      const newPls = data.playlists.map((pl: any, i: number) => ({
+        id: `remote_${Date.now()}_${i}`,
+        name: pl.name || 'Remote Playlist',
+        url: pl.url,
+        active: false,
+        type: pl.type || 'live'
+      }));
+      const combined = [...currentPls, ...newPls];
+      savePlaylists(combined);
+      setPlaylists(getPlaylists());
+    }
+  };
+
+  useEffect(() => {
+    const unsubscribe = subscribeToConfig((data) => {
+      handleFirebaseData(data);
+    });
+    return () => unsubscribe();
+  }, []);
+
   const syncFromBackend = async (url: string) => {
-    if (!url) return;
     setBackendSyncing(true);
     setBackendError('');
     try {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error('Network error fetching setup');
-      
-      const text = await res.text();
-      let data;
-      try {
-        data = JSON.parse(text);
-      } catch (parseError) {
-        throw new Error('Invalid JSON received from URL. Make sure the URL points directly to a JSON file.');
-      }
-      
-      if (data.app_notice) {
-        setAppNotice(data.app_notice);
-        localStorage.setItem('app_notice', data.app_notice);
-      }
-      
-      if (data.xtream) {
-        setXtreamUrl(data.xtream.url || '');
-        setXtreamUser(data.xtream.username || '');
-        setXtreamPass(data.xtream.password || '');
-        setXtreamConfigured(true);
-        localStorage.setItem('xtream_url', data.xtream.url || '');
-        localStorage.setItem('xtream_user', data.xtream.username || '');
-        localStorage.setItem('xtream_pass', data.xtream.password || '');
-      }
-      
-      if (data.playlists && Array.isArray(data.playlists)) {
-        const currentPls = getPlaylists().filter(p => !p.id.startsWith('remote_'));
-        const newPls = data.playlists.map((pl: any, i: number) => ({
-          id: `remote_${Date.now()}_${i}`,
-          name: pl.name || 'Remote Playlist',
-          url: pl.url,
-          active: false,
-          type: pl.type || 'live'
-        }));
-        const combined = [...currentPls, ...newPls];
-        savePlaylists(combined);
-        setPlaylists(getPlaylists());
-      }
-      
-      localStorage.setItem('backend_api_url', url);
-      setBackendApiUrl(url);
+      const data = {
+        app_notice: appNotice,
+        xtream: {
+          url: xtreamUrl,
+          username: xtreamUser,
+          password: xtreamPass
+        },
+        playlists: playlists.filter(p => !p.id.startsWith('remote_')).map(p => ({
+          name: p.name,
+          url: p.url,
+          type: p.type
+        }))
+      };
+      await updateConfig(data);
       setBackendSyncing(false);
+      alert('Config successfully published to Firebase!');
       return true;
     } catch (e: any) {
       setBackendError(e.message || 'Failed to sync');
@@ -219,13 +221,6 @@ export default function App() {
       return false;
     }
   };
-
-  useEffect(() => {
-    if (backendApiUrl && !hasSyncRan) {
-      setHasSyncRan(true);
-      syncFromBackend(backendApiUrl);
-    }
-  }, [backendApiUrl, hasSyncRan]);
 
   const playDirectLink = () => {
     if (!directUrl) return;
@@ -326,7 +321,7 @@ export default function App() {
           <Film className="w-12 h-12 text-teal-500/50 mb-4" />
           <h2 className="text-lg font-bold text-white mb-2">VOD (Movies & Series)</h2>
           <p className="text-sm max-w-sm mb-6">Movies and Series are not currently set up. Please contact the administrator or check backend synchronization.</p>
-          {isAdmin && (
+          {isRouteAdmin && isAdmin && (
             <button onClick={() => setShowXtreamModal(true)} className="px-6 py-2.5 bg-teal-500 hover:bg-teal-400 text-teal-950 font-bold rounded-xl transition-colors text-sm">
               Setup VOD Config
             </button>
@@ -420,7 +415,7 @@ export default function App() {
           <div className="hidden sm:flex w-9 h-9 bg-teal-500/10 rounded-lg items-center justify-center border border-teal-500/20 shrink-0">
             <Tv className="w-5 h-5 text-teal-400" />
           </div>
-          <h1 onClick={handleTitleClick} className="flex items-center gap-1.5 text-lg font-bold tracking-widest text-white whitespace-nowrap cursor-pointer select-none">
+          <h1 className="flex items-center gap-1.5 text-lg font-bold tracking-widest text-white whitespace-nowrap select-none">
             <span>STREAM <span className="text-teal-400">TV</span></span>
             <span className="text-[10px] bg-gradient-to-r from-teal-400 to-emerald-400 text-slate-950 px-1.5 py-0.5 rounded font-black tracking-tight">PRO</span>
           </h1>
@@ -444,14 +439,16 @@ export default function App() {
               <span className="text-[10px] font-bold text-red-500 tracking-widest uppercase">Live</span>
             </div>
           )}
-          {isAdmin && (
+          {isRouteAdmin && isAdmin && (
             <button onClick={() => setShowAddModal(true)} className="p-2 bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 hover:text-white rounded-lg transition-all" title="Add Playlist">
               <Plus className="w-4 h-4" />
             </button>
           )}
-          <button onClick={() => setShowDirectModal(true)} className="p-2 bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 hover:text-white rounded-lg transition-all" title="Direct Play">
-            <FolderOpen className="w-4 h-4" />
-          </button>
+          {isRouteAdmin && isAdmin && (
+            <button onClick={() => setShowDirectModal(true)} className="p-2 bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 hover:text-white rounded-lg transition-all" title="Direct Play">
+              <FolderOpen className="w-4 h-4" />
+            </button>
+          )}
           <button onClick={() => loadPlaylist(activePlaylist)} className="p-2 bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 hover:text-white rounded-lg transition-all" title="Reload">
             <RefreshCw className="w-4 h-4" />
           </button>
@@ -492,16 +489,18 @@ export default function App() {
             <button onClick={() => setActiveTab('vod')} className={`flex-1 min-w-[70px] flex flex-col items-center gap-1.5 p-2 rounded-lg text-[10px] sm:text-xs font-semibold transition-colors ${activeTab === 'vod' ? 'bg-white/10 text-teal-400' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
               <Film className="w-4 h-4" /> VOD
             </button>
-            <button onClick={() => setActiveTab('lists')} className={`flex-1 min-w-[70px] flex flex-col items-center gap-1.5 p-2 rounded-lg text-[10px] sm:text-xs font-semibold transition-colors ${activeTab === 'lists' ? 'bg-white/10 text-teal-400' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
-              <ListVideo className="w-4 h-4" /> Playlists
-            </button>
-            <button onClick={() => setActiveTab('dev')} className={`flex-1 min-w-[70px] flex flex-col items-center gap-1.5 p-2 rounded-lg text-[10px] sm:text-xs font-semibold transition-colors ${activeTab === 'dev' ? 'bg-white/10 text-teal-400' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
-              <Code className="w-4 h-4" /> Dev
-            </button>
-            {isAdmin && (
-              <button onClick={() => setActiveTab('setup')} className={`flex-1 min-w-[70px] flex flex-col items-center gap-1.5 p-2 rounded-lg text-[10px] sm:text-xs font-semibold transition-colors ${activeTab === 'setup' ? 'bg-white/10 text-teal-400' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
-                <Settings className="w-4 h-4" /> Setup
-              </button>
+            {isRouteAdmin && isAdmin && (
+              <>
+                <button onClick={() => setActiveTab('lists')} className={`flex-1 min-w-[70px] flex flex-col items-center gap-1.5 p-2 rounded-lg text-[10px] sm:text-xs font-semibold transition-colors ${activeTab === 'lists' ? 'bg-white/10 text-teal-400' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
+                  <ListVideo className="w-4 h-4" /> Playlists
+                </button>
+                <button onClick={() => setActiveTab('dev')} className={`flex-1 min-w-[70px] flex flex-col items-center gap-1.5 p-2 rounded-lg text-[10px] sm:text-xs font-semibold transition-colors ${activeTab === 'dev' ? 'bg-white/10 text-teal-400' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
+                  <Code className="w-4 h-4" /> Dev
+                </button>
+                <button onClick={() => setActiveTab('setup')} className={`flex-1 min-w-[70px] flex flex-col items-center gap-1.5 p-2 rounded-lg text-[10px] sm:text-xs font-semibold transition-colors ${activeTab === 'setup' ? 'bg-white/10 text-teal-400' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
+                  <Settings className="w-4 h-4" /> Setup
+                </button>
+              </>
             )}
           </div>
 
@@ -575,7 +574,7 @@ export default function App() {
                         >
                           {pl.active ? 'Active' : 'Load'}
                         </button>
-                        {(!pl.isDefault && isAdmin) && (
+                        {(!pl.isDefault && isRouteAdmin && isAdmin) && (
                           <button 
                             onClick={() => {
                               const updated = playlists.filter(p => p.id !== pl.id);
@@ -643,22 +642,11 @@ export default function App() {
                   </div>
                   <div>
                     <h2 className="font-bold text-white text-lg">Server Configuration</h2>
-                    <p className="text-xs text-slate-400">Sync Notice, Playlists & Xtream from JSON</p>
+                    <p className="text-xs text-slate-400">Publish Notice, Playlists & Xtream to Firebase</p>
                   </div>
                 </div>
                 
                 <div className="space-y-4">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Backend API URL (Remote JSON)</label>
-                    <input 
-                      type="url" 
-                      value={backendApiUrl} 
-                      onChange={(e) => setBackendApiUrl(e.target.value)} 
-                      placeholder="https://example.com/api/config.json" 
-                      className="w-full bg-slate-800/80 border border-slate-700/50 rounded-xl py-3 px-4 focus:outline-none focus:border-teal-500 transition-colors text-white font-mono text-sm placeholder:text-slate-600" 
-                    />
-                  </div>
-
                   {backendError && (
                     <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 text-xs rounded-xl">
                       {backendError}
@@ -667,47 +655,35 @@ export default function App() {
 
                   <div className="flex gap-3 pt-2">
                      <button 
-                       onClick={() => syncFromBackend(backendApiUrl)} 
-                       disabled={backendSyncing || !backendApiUrl}
-                       className="flex-1 py-3 bg-slate-700 hover:bg-slate-600 active:bg-slate-800 text-white font-bold rounded-xl shadow-lg transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                       onClick={() => syncFromBackend('')} 
+                       disabled={backendSyncing}
+                       className="flex-1 py-3 bg-teal-600 hover:bg-teal-500 active:bg-teal-700 text-white font-bold rounded-xl shadow-lg shadow-teal-500/20 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
                      >
                        {backendSyncing && <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
-                       Pull Remote Config
-                     </button>
-                     <button 
-                       onClick={() => {
-                         localStorage.removeItem('custom_json_config');
-                         const defUrl = window.location.origin + '/config.json';
-                         setBackendApiUrl(defUrl);
-                         localStorage.setItem('backend_api_url', defUrl);
-                         syncFromBackend(defUrl);
-                       }} 
-                       className="py-3 px-6 bg-slate-700 hover:bg-slate-600 active:bg-slate-800 text-white font-bold rounded-xl shadow-lg transition-all"
-                     >
-                       Reset to Default
+                       Publish Config to Firebase
                      </button>
                   </div>
                   
                   <div className="border-t border-slate-800 my-2 pt-4">
-                    <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Or Paste JSON Directly</label>
+                    <div className="flex items-center justify-between mb-1.5 ml-1">
+                      <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest">Or Paste JSON Directly</label>
+                      <button 
+                        onClick={() => {
+                          const area = document.getElementById('json-paste-area') as HTMLTextAreaElement;
+                          if (area) {
+                            area.value = `{\n  "app_notice": "Your notice...",\n  "xtream": {\n    "url": "http://...",\n    "username": "...",\n    "password": "..."\n  },\n  "playlists": [\n    {\n      "name": "Live TV",\n      "url": "https://.../playlist.m3u",\n      "type": "live"\n    }\n  ]\n}`;
+                          }
+                        }}
+                        className="text-[10px] bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded"
+                      >
+                        Load Example JSON
+                      </button>
+                    </div>
                     <textarea 
                       id="json-paste-area"
                       className="w-full h-40 bg-slate-800/80 border border-slate-700/50 rounded-xl py-3 px-4 focus:outline-none focus:border-teal-500 transition-colors text-white font-mono text-[10px] sm:text-xs placeholder:text-slate-600 resize-none"
                       placeholder="Paste your JSON configuration block here..."
-                      defaultValue={localStorage.getItem('custom_json_config') || `{
-  "app_notice": "আপনার প্রিমিয়াম বিনোদনের ঠিকানা STREAM TV PRO। উপভোগ করুন উচ্চমানের লাইভ টিভি, স্পোর্টস ও জনপ্রিয় চ্যানেলসমূহ। দ্রুত, নিরবচ্ছিন্ন ও আধুনিক স্ট্রিমিং অভিজ্ঞতা।\\n\\n",
-  "xtream": {
-    "url": "...",
-    "username": "...",
-    "password": "...."
-  },
-  "playlists": [
-    {
-      "name": "Stream TV Pro",
-      "url": "https://raw.githubusercontent.com/shakil951/PlaylistCheck/refs/heads/main/combined_playlist.m3u"
-    }
-  ]
-}`}
+                      defaultValue={localStorage.getItem('custom_json_config') || ''}
                     ></textarea>
                     <button 
                       onClick={() => {
@@ -779,7 +755,6 @@ export default function App() {
 
                           localStorage.setItem('custom_json_config', JSON.stringify(data, null, 2));
                           localStorage.removeItem('backend_api_url');
-                          setBackendApiUrl('');
                           
                           setActiveTab('channels');
                           alert("Configuration applied successfully!");
@@ -817,19 +792,21 @@ export default function App() {
                    <Film className="w-4 h-4 mb-0.5" />
                    VOD
                 </button>
-                <button onClick={() => setActiveTab('dev')} className={`flex-1 min-w-[60px] flex flex-col items-center gap-1 py-1 rounded-lg text-[10px] font-bold tracking-wide uppercase transition-colors ${activeTab === 'dev' ? 'bg-white/10 text-teal-400' : 'text-slate-400 hover:text-white'}`}>
-                   <Code className="w-4 h-4 mb-0.5" />
-                   Dev
-                </button>
-                <button onClick={() => setActiveTab('lists')} className={`flex-1 min-w-[60px] flex flex-col items-center gap-1 py-1 rounded-lg text-[10px] font-bold tracking-wide uppercase transition-colors ${activeTab === 'lists' ? 'bg-white/10 text-teal-400' : 'text-slate-400 hover:text-white'}`}>
-                   <ListVideo className="w-4 h-4 mb-0.5" />
-                   Lists
-                </button>
-                {isAdmin && (
-                  <button onClick={() => setActiveTab('setup')} className={`flex-1 min-w-[60px] flex flex-col items-center gap-1 py-1 rounded-lg text-[10px] font-bold tracking-wide uppercase transition-colors ${activeTab === 'setup' ? 'bg-white/10 text-teal-400' : 'text-slate-400 hover:text-white'}`}>
-                     <Settings className="w-4 h-4 mb-0.5" />
-                     Setup
-                  </button>
+                {isRouteAdmin && isAdmin && (
+                  <>
+                    <button onClick={() => setActiveTab('dev')} className={`flex-1 min-w-[60px] flex flex-col items-center gap-1 py-1 rounded-lg text-[10px] font-bold tracking-wide uppercase transition-colors ${activeTab === 'dev' ? 'bg-white/10 text-teal-400' : 'text-slate-400 hover:text-white'}`}>
+                       <Code className="w-4 h-4 mb-0.5" />
+                       Dev
+                    </button>
+                    <button onClick={() => setActiveTab('lists')} className={`flex-1 min-w-[60px] flex flex-col items-center gap-1 py-1 rounded-lg text-[10px] font-bold tracking-wide uppercase transition-colors ${activeTab === 'lists' ? 'bg-white/10 text-teal-400' : 'text-slate-400 hover:text-white'}`}>
+                       <ListVideo className="w-4 h-4 mb-0.5" />
+                       Lists
+                    </button>
+                    <button onClick={() => setActiveTab('setup')} className={`flex-1 min-w-[60px] flex flex-col items-center gap-1 py-1 rounded-lg text-[10px] font-bold tracking-wide uppercase transition-colors ${activeTab === 'setup' ? 'bg-white/10 text-teal-400' : 'text-slate-400 hover:text-white'}`}>
+                       <Settings className="w-4 h-4 mb-0.5" />
+                       Setup
+                    </button>
+                  </>
                 )}
               </div>
               
@@ -898,7 +875,7 @@ export default function App() {
                                >
                                  {pl.active ? 'Active' : 'Load'}
                                </button>
-                               {(!pl.isDefault && isAdmin) && (
+                               {(!pl.isDefault && isRouteAdmin && isAdmin) && (
                                  <button 
                                    onClick={() => {
                                      const updated = playlists.filter(p => p.id !== pl.id);
@@ -948,21 +925,11 @@ export default function App() {
                         </div>
                         <div>
                           <h2 className="font-bold text-white text-lg">Server Configuration</h2>
-                          <p className="text-xs text-slate-400">Sync Notice, Playlists & Xtream from JSON</p>
+                          <p className="text-xs text-slate-400">Publish Notice, Playlists & Xtream to Firebase</p>
                         </div>
                       </div>
                       
                       <div className="space-y-4">
-                        <div>
-                          <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Backend API URL (Remote JSON)</label>
-                          <input 
-                            type="url" 
-                            value={backendApiUrl} 
-                            onChange={(e) => setBackendApiUrl(e.target.value)} 
-                            placeholder="https://example.com/api/config.json" 
-                            className="w-full bg-slate-800/80 border border-slate-700/50 rounded-xl py-3 px-4 focus:outline-none focus:border-teal-500 transition-colors text-white font-mono text-sm placeholder:text-slate-600" 
-                          />
-                        </div>
 
                         {backendError && (
                           <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 text-xs rounded-xl">
@@ -972,47 +939,35 @@ export default function App() {
 
                         <div className="flex flex-col gap-3 pt-2">
                            <button 
-                             onClick={() => syncFromBackend(backendApiUrl)} 
-                             disabled={backendSyncing || !backendApiUrl}
-                             className="w-full py-3 bg-slate-700 hover:bg-slate-600 active:bg-slate-800 text-white font-bold rounded-xl shadow-lg transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                             onClick={() => syncFromBackend('')} 
+                             disabled={backendSyncing}
+                             className="w-full py-3 bg-teal-600 hover:bg-teal-500 active:bg-teal-700 text-white font-bold rounded-xl shadow-lg shadow-teal-500/20 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
                            >
                              {backendSyncing && <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
-                             Pull Remote Config
-                           </button>
-                           <button 
-                             onClick={() => {
-                               localStorage.removeItem('custom_json_config');
-                               const defUrl = window.location.origin + '/config.json';
-                               setBackendApiUrl(defUrl);
-                               localStorage.setItem('backend_api_url', defUrl);
-                               syncFromBackend(defUrl);
-                             }} 
-                             className="w-full py-3 bg-slate-700 hover:bg-slate-600 active:bg-slate-800 text-white font-bold rounded-xl shadow-lg transition-all"
-                           >
-                             Reset to Default
+                             Publish Config to Firebase
                            </button>
                         </div>
                         
                         <div className="border-t border-slate-800 my-2 pt-4">
-                          <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Or Paste JSON Directly</label>
+                          <div className="flex items-center justify-between mb-1.5 ml-1">
+                            <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest">Or Paste JSON Directly</label>
+                            <button 
+                              onClick={() => {
+                                const area = document.getElementById('mobile-json-paste-area') as HTMLTextAreaElement;
+                                if (area) {
+                                  area.value = `{\n  "app_notice": "Your notice...",\n  "xtream": {\n    "url": "http://...",\n    "username": "...",\n    "password": "..."\n  },\n  "playlists": [\n    {\n      "name": "Live TV",\n      "url": "https://.../playlist.m3u",\n      "type": "live"\n    }\n  ]\n}`;
+                                }
+                              }}
+                              className="text-[10px] bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded"
+                            >
+                              Load Example JSON
+                            </button>
+                          </div>
                           <textarea 
                             id="mobile-json-paste-area"
                             className="w-full h-40 bg-slate-800/80 border border-slate-700/50 rounded-xl py-3 px-4 focus:outline-none focus:border-teal-500 transition-colors text-white font-mono text-[10px] sm:text-xs placeholder:text-slate-600 resize-none"
                             placeholder="Paste your JSON configuration block here..."
-                            defaultValue={localStorage.getItem('custom_json_config') || `{
-  "app_notice": "আপনার প্রিমিয়াম বিনোদনের ঠিকানা STREAM TV PRO। উপভোগ করুন উচ্চমানের লাইভ টিভি, স্পোর্টস ও জনপ্রিয় চ্যানেলসমূহ। দ্রুত, নিরবচ্ছিন্ন ও আধুনিক স্ট্রিমিং অভিজ্ঞতা।\\n\\n",
-  "xtream": {
-    "url": "...",
-    "username": "...",
-    "password": "...."
-  },
-  "playlists": [
-    {
-      "name": "Stream TV Pro",
-      "url": "https://raw.githubusercontent.com/shakil951/PlaylistCheck/refs/heads/main/combined_playlist.m3u"
-    }
-  ]
-}`}
+                            defaultValue={localStorage.getItem('custom_json_config') || ''}
                           ></textarea>
                           <button 
                             onClick={() => {
@@ -1083,7 +1038,6 @@ export default function App() {
 
                                 localStorage.setItem('custom_json_config', JSON.stringify(data, null, 2));
                                 localStorage.removeItem('backend_api_url');
-                                setBackendApiUrl('');
                                 
                                 setActiveTab('channels');
                                 alert("Configuration applied successfully!");

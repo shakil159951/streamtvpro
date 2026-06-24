@@ -55,7 +55,7 @@ async function startServer() {
     const requestOptions = {
         headers,
         method: req.method,
-        timeout: 15000 // 15 second timeout to fail fast on unreachable local networks
+        timeout: 60000 // 60 second timeout for large VOD playlists
     };
 
     const client = targetUrl.startsWith("https") ? https : http;

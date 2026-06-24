@@ -188,7 +188,7 @@ export default function Player({ channel }: PlayerProps) {
 
         const hls = new Hls({ 
             enableWorker: true, 
-            lowLatencyMode: true, 
+            lowLatencyMode: false, 
             backBufferLength: 90,
             xhrSetup: (xhr, url) => {
                 if (proxyIdx > 0) {

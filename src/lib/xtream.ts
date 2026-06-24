@@ -76,15 +76,31 @@ export class XtreamApi {
     try {
       const fetchUrl = isMixedContent ? proxyUrl : url;
       const res = await fetch(fetchUrl, fetchOpts);
-      if (!res.ok) throw new Error('Network response was not ok');
-      return await res.json();
-    } catch (e) {
-      if (!isMixedContent) {
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`Network response was not ok (${res.status}): ${text.substring(0, 100)}`);
+      }
+      const text = await res.text();
+      try {
+          return JSON.parse(text);
+      } catch (e) {
+          throw new Error(`Invalid JSON response: ${text.substring(0, 100)}`);
+      }
+    } catch (e: any) {
+      if (!isMixedContent && !e.message?.includes('Invalid JSON')) {
         // Fallback to proxy if direct request fails (likely CORS)
         try {
           const res = await fetch(proxyUrl, fetchOpts);
-          if (!res.ok) throw new Error('Proxy network response was not ok');
-          return await res.json();
+          if (!res.ok) {
+             const text = await res.text().catch(() => '');
+             throw new Error(`Proxy network response was not ok (${res.status}): ${text.substring(0, 100)}`);
+          }
+          const text = await res.text();
+          try {
+              return JSON.parse(text);
+          } catch (err) {
+              throw new Error(`Invalid JSON response (proxy): ${text.substring(0, 100)}`);
+          }
         } catch (proxyError) {
            throw proxyError;
         }
