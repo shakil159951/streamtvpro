@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import mpegts from 'mpegts.js';
+import * as dashjs from 'dashjs';
 
 if (mpegts && mpegts.LoggingControl) {
   mpegts.LoggingControl.enableAll = false;
@@ -22,6 +23,7 @@ export default function Player({ channel }: PlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const mpegtsRef = useRef<any>(null);
+  const dashRef = useRef<dashjs.MediaPlayerClass | null>(null);
   
   const [isPlaying, setIsPlaying] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -59,12 +61,17 @@ export default function Player({ channel }: PlayerProps) {
         mpegtsRef.current.destroy();
         mpegtsRef.current = null;
     }
+    if (dashRef.current) {
+        dashRef.current.destroy();
+        dashRef.current = null;
+    }
     
     const cleanUrl = channel.url.split('?')[0].split('#')[0];
     const ext = (cleanUrl.split('.').pop() || '').toLowerCase();
     const directExts = ['mp4', 'mkv', 'webm', 'mov', 'm4v', 'ogg', 'ogv', 'avi', 'wmv', 'flv'];
     const isM3u8Ext = ext === 'm3u8' || channel.url.includes('.m3u8');
-    const isTsExt = ext === 'ts' || (channel.url.includes('.ts') && !isM3u8Ext);
+    const isDashExt = ext === 'mpd' || channel.url.includes('.mpd');
+    const isTsExt = ext === 'ts' || (channel.url.includes('.ts') && !isM3u8Ext && !isDashExt);
     
     const PROXIES = [
         '',
@@ -97,11 +104,17 @@ export default function Player({ channel }: PlayerProps) {
             if (nIdx < maxProxyIndex) {
                  tryNativeFirst(nIdx + 1);
             } else {
-                 // Native failed on all proxies, fallback to Hls/MpegTS
+                 // Native failed on all proxies, fallback to Dash/Hls/MpegTS
                  if (isTsExt && mpegts.getFeatureList().mseLivePlayback) {
                      initMpegts(0);
-                 } else {
+                 } else if (isDashExt) {
+                     initDash(0);
+                 } else if (isM3u8Ext) {
                      initHls(0);
+                 } else if (ext === 'flv' && mpegts.getFeatureList().mseLivePlayback) {
+                     initMpegts(0);
+                 } else {
+                     initHls(0); // last resort
                  }
             }
         };
@@ -118,6 +131,31 @@ export default function Player({ channel }: PlayerProps) {
             video.removeEventListener('error', handleError);
             setLoading(false);
         };
+    };
+
+    const initDash = (proxyIdx: number) => {
+        if (isDestroyed) return;
+        if (dashRef.current) {
+            dashRef.current.destroy();
+            dashRef.current = null;
+        }
+
+        const dashPlayer = dashjs.MediaPlayer().create();
+        dashRef.current = dashPlayer;
+        
+        dashPlayer.on(dashjs.MediaPlayer.events.ERROR, (e: any) => {
+            if (proxyIdx < maxProxyIndex) {
+                 initDash(proxyIdx + 1);
+            } else {
+                 setError('DASH Error: Stream playback failed');
+                 setLoading(false);
+            }
+        });
+        dashPlayer.on(dashjs.MediaPlayer.events.PLAYBACK_PLAYING, () => {
+             setLoading(false);
+        });
+
+        dashPlayer.initialize(videoRef.current as HTMLMediaElement, getProxiedUrl(channel.url, proxyIdx), true);
     };
 
     const initMpegts = (proxyIdx: number) => {
@@ -250,6 +288,10 @@ export default function Player({ channel }: PlayerProps) {
         if (mpegtsRef.current) {
             mpegtsRef.current.destroy();
             mpegtsRef.current = null;
+        }
+        if (dashRef.current) {
+            dashRef.current.destroy();
+            dashRef.current = null;
         }
     };
   }, [channel]);

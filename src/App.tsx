@@ -14,29 +14,21 @@ const APP_NOTICE = "Welcome to STREAM TV PRO. Enjoy the best premium broadcast e
 
 export default function App() {
   const isRouteAdmin = window.location.pathname.includes('/admin') || window.location.search.includes('admin=true') || window.location.hash.includes('admin');
-  const [isAdmin, setIsAdmin] = useState(() => localStorage.getItem('is_admin') === 'true');
-
-  useEffect(() => {
-    if (isRouteAdmin && !isAdmin) {
-      const pwd = prompt("Enter Admin Password:");
-      if (pwd === "shakil10") {
-        setIsAdmin(true);
-        localStorage.setItem('is_admin', 'true');
-      } else {
-        window.location.href = '/';
-      }
-    }
-  }, [isRouteAdmin, isAdmin]);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [adminLoginInput, setAdminLoginInput] = useState('');
 
   const [playlists, setPlaylists] = useState<Playlist[]>(() => getPlaylists());
   const [channels, setChannels] = useState<Channel[]>([]);
+  const [m3uVodChannels, setM3uVodChannels] = useState<Channel[]>([]);
   const [activeChannel, setActiveChannel] = useState<Channel | null>(null);
   const [search, setSearch] = useState('');
   const [groupFilter, setGroupFilter] = useState('');
   const [activeTab, setActiveTab] = useState<'channels' | 'vod' | 'lists' | 'dev' | 'setup'>('channels');
   const [vodType, setVodType] = useState<'movies' | 'series'>('movies');
   const [loading, setLoading] = useState(true);
+  const [loadingVod, setLoadingVodM3u] = useState(false);
   const [error, setError] = useState('');
+  const [vodError, setVodError] = useState('');
 
   // UI State
   const [leftDrawerOpen, setLeftDrawerOpen] = useState(false);
@@ -47,6 +39,7 @@ export default function App() {
   const [hasSyncRan, setHasSyncRan] = useState(false);
   const [backendSyncing, setBackendSyncing] = useState(false);
   const [backendError, setBackendError] = useState('');
+  const [backendSuccess, setBackendSuccess] = useState('');
 
   // Modals
   const [showAddModal, setShowAddModal] = useState(false);
@@ -73,7 +66,14 @@ export default function App() {
   const [directName, setDirectName] = useState('');
   const [directUrl, setDirectUrl] = useState('');
 
-  const activePlaylist = useMemo(() => playlists.find(p => p.active) || playlists[0], [playlists]);
+  const activeLivePlaylist = useMemo(() => playlists.find(p => p.active && p.type !== 'vod') || playlists.find(p => p.type !== 'vod'), [playlists]);
+  const activeVodPlaylist = useMemo(() => {
+    const active = playlists.find(p => p.active && p.type === 'vod');
+    if (active) return active;
+    if (!xtreamConfigured) return playlists.find(p => p.type === 'vod');
+    return undefined;
+  }, [playlists, xtreamConfigured]);
+  const activePlaylist = activeTab === 'vod' ? activeVodPlaylist : activeLivePlaylist;
 
   useEffect(() => {
     if (activeChannel) {
@@ -84,13 +84,21 @@ export default function App() {
   }, [activeChannel]);
 
   useEffect(() => {
-    loadPlaylist(activePlaylist);
-  }, [activePlaylist]);
+    if (activeLivePlaylist) {
+      loadPlaylist(activeLivePlaylist, setChannels, setLoading, setError);
+    }
+  }, [activeLivePlaylist?.url]);
 
-  const loadPlaylist = async (pl: Playlist) => {
-    setLoading(true);
-    setError('');
-    setChannels([]);
+  useEffect(() => {
+    if (activeVodPlaylist) {
+      loadPlaylist(activeVodPlaylist, setM3uVodChannels, setLoadingVodM3u, setVodError);
+    }
+  }, [activeVodPlaylist?.url]);
+
+  const loadPlaylist = async (pl: Playlist, setChs: any, setLdg: any, setErr: any) => {
+    setLdg(true);
+    setErr('');
+    setChs([]);
     setActiveChannel(null);
     try {
       const fetchOpts = { cache: 'no-store' as RequestCache };
@@ -99,21 +107,23 @@ export default function App() {
       const text = await resp.text();
       const chs = parseM3U(text);
       if (chs.length === 0) throw new Error('No channels found');
-      setChannels(chs);
+      setChs(chs);
     } catch (err: any) {
-      setError(err.message || 'Failed to load playlist');
+      setErr(err.message || 'Failed to load playlist');
     } finally {
-      setLoading(false);
+      setLdg(false);
     }
   };
 
+  const displayChannels = activeTab === 'vod' ? m3uVodChannels : channels;
+
   const filteredChannels = useMemo(() => {
-    return channels.filter(c => {
+    return displayChannels.filter(c => {
       const matchQ = !search || c.name.toLowerCase().includes(search.toLowerCase()) || c.group.toLowerCase().includes(search.toLowerCase());
       const matchG = !groupFilter || c.group === groupFilter;
       return matchQ && matchG;
     });
-  }, [channels, search, groupFilter]);
+  }, [displayChannels, search, groupFilter]);
 
   const filteredMovies = useMemo(() => {
     return movies.filter(m => (m.name || '').toLowerCase().includes(search.toLowerCase()));
@@ -124,8 +134,8 @@ export default function App() {
   }, [seriesList, search]);
 
   const groups = useMemo(() => {
-    return Array.from(new Set(channels.map(c => c.group))).sort();
-  }, [channels]);
+    return Array.from(new Set(displayChannels.map(c => c.group))).sort();
+  }, [displayChannels]);
 
   const handlePlay = (ch: Channel) => {
     setActiveChannel(ch);
@@ -147,10 +157,11 @@ export default function App() {
     if (!newPlUrl) return;
     const name = newPlName.trim() || 'Custom Playlist';
     const newPl: Playlist = { id: `custom_${Date.now()}`, name, url: newPlUrl.trim(), active: true, type: newPlType };
-    const updated = playlists.map(p => ({ ...p, active: false }));
+    const updated = playlists.map(p => ({ ...p, active: p.type === newPlType ? false : p.active }));
     updated.push(newPl);
     setPlaylists(updated);
     savePlaylists(updated);
+    publishConfigToFirebase(updated);
     setShowAddModal(false);
     setNewPlName('');
     setNewPlUrl('');
@@ -175,7 +186,11 @@ export default function App() {
     }
     
     if (data.playlists && Array.isArray(data.playlists)) {
-      const currentPls = getPlaylists().filter(p => !p.id.startsWith('remote_'));
+      let currentPls = getPlaylists().filter(p => !p.id.startsWith('remote_'));
+      // If Firebase has playlists, we should remove the default playlist so it doesn't get merged if the admin didn't include it.
+      if (data.playlists.length > 0) {
+        currentPls = currentPls.filter(p => !p.isDefault);
+      }
       const newPls = data.playlists.map((pl: any, i: number) => ({
         id: `remote_${Date.now()}_${i}`,
         name: pl.name || 'Remote Playlist',
@@ -183,7 +198,14 @@ export default function App() {
         active: false,
         type: pl.type || 'live'
       }));
-      const combined = [...currentPls, ...newPls];
+      const newUrls = new Set(newPls.map((p: any) => p.url));
+      const currentPlsDeduped = currentPls.filter(p => !newUrls.has(p.url));
+      const combined = [...currentPlsDeduped, ...newPls];
+      // Ensure at least one is active
+      if (combined.length > 0 && !combined.find(p => p.active && p.type === 'live')) {
+        const live = combined.find(p => p.type === 'live' || p.type !== 'vod');
+        if (live) live.active = true;
+      }
       savePlaylists(combined);
       setPlaylists(getPlaylists());
     }
@@ -196,26 +218,30 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  const syncFromBackend = async (url: string) => {
+  const publishConfigToFirebase = async (plsToPublish: Playlist[] = playlists) => {
     setBackendSyncing(true);
     setBackendError('');
+    setBackendSuccess('');
     try {
-      const data = {
-        app_notice: appNotice,
+      const data = JSON.parse(JSON.stringify({
+        app_notice: appNotice || '',
         xtream: {
-          url: xtreamUrl,
-          username: xtreamUser,
-          password: xtreamPass
+          url: xtreamUrl || '',
+          username: xtreamUser || '',
+          password: xtreamPass || ''
         },
-        playlists: playlists.filter(p => !p.id.startsWith('remote_')).map(p => ({
-          name: p.name,
-          url: p.url,
-          type: p.type
+        playlists: plsToPublish.map(p => ({
+          name: p.name || '',
+          url: p.url || '',
+          type: p.type || 'live'
         }))
-      };
+      }));
       await updateConfig(data);
+      localStorage.setItem('custom_json_config', JSON.stringify(data, null, 2));
+      setCustomJsonInput(JSON.stringify(data, null, 2));
       setBackendSyncing(false);
-      alert('Config successfully published to Firebase!');
+      setBackendSuccess('Config successfully published to Firebase!');
+      setTimeout(() => setBackendSuccess(''), 3000);
       return true;
     } catch (e: any) {
       setBackendError(e.message || 'Failed to sync');
@@ -266,11 +292,16 @@ export default function App() {
   };
 
   const saveXtreamConfig = () => {
+    if (xtreamUrl.toLowerCase().includes('.m3u')) {
+      alert("It looks like you entered an M3U playlist URL into the Xtream Codes config. Xtream API URLs do not end in .m3u.\n\nPlease add M3U VODs in the Playlists tab instead.");
+      return;
+    }
     localStorage.setItem('xtream_url', xtreamUrl);
     localStorage.setItem('xtream_user', xtreamUser);
     localStorage.setItem('xtream_pass', xtreamPass);
     setXtreamConfigured(true);
     setShowXtreamModal(false);
+    publishConfigToFirebase();
     setMovies([]);
     setSeriesList([]);
     if (activeTab === 'vod') {
@@ -278,7 +309,7 @@ export default function App() {
     }
   };
 
-  const clearXtreamConfig = () => {
+  const clearXtreamConfig = async () => {
     localStorage.removeItem('xtream_url');
     localStorage.removeItem('xtream_user');
     localStorage.removeItem('xtream_pass');
@@ -288,6 +319,24 @@ export default function App() {
     setXtreamConfigured(false);
     setMovies([]);
     setSeriesList([]);
+    try {
+      const data = JSON.parse(JSON.stringify({
+        app_notice: appNotice || '',
+        xtream: {
+          url: '',
+          username: '',
+          password: ''
+        },
+        playlists: playlists.map(p => ({
+          name: p.name || '',
+          url: p.url || '',
+          type: p.type || 'live'
+        }))
+      }));
+      await updateConfig(data);
+      localStorage.setItem('custom_json_config', JSON.stringify(data, null, 2));
+      setCustomJsonInput(JSON.stringify(data, null, 2));
+    } catch(err) {}
   };
 
   const playMovie = (movie: XtreamVod) => {
@@ -317,6 +366,105 @@ export default function App() {
   }
 
   const renderVodTab = () => {
+    const vodPlaylists = playlists.filter(p => p.type === 'vod');
+    const hasMultipleSources = vodPlaylists.length > 0 && xtreamConfigured;
+    
+    const sourceSelector = (hasMultipleSources || vodPlaylists.length > 1) ? (
+      <div className="p-3 shrink-0 flex flex-col gap-2">
+        <select
+          value={activeVodPlaylist?.id || 'xtream'}
+          onChange={(e) => {
+            const val = e.target.value;
+            const updated = playlists.map(p => ({ ...p, active: p.type === 'vod' ? p.id === val : p.active }));
+            setPlaylists(updated);
+            savePlaylists(updated);
+          }}
+          className="w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-sm focus:outline-none focus:border-teal-500/50 focus:bg-white/10 appearance-none cursor-pointer text-slate-300"
+        >
+          {xtreamConfigured && <option className="bg-slate-900 text-slate-200" value="xtream">Xtream API (Movies & Series)</option>}
+          {vodPlaylists.map(p => <option className="bg-slate-900 text-slate-200" key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+      </div>
+    ) : null;
+
+    if (activePlaylist?.type === 'vod') {
+      return (
+        <div className="flex-1 flex flex-col h-full overflow-hidden">
+          {sourceSelector}
+          <div className="md:hidden p-2.5 shrink-0 bg-[#0a0a0a]">
+              <div className="relative w-full">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
+                  <input type="text" placeholder="Search VOD..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-lg py-1.5 pl-8 pr-3 text-xs focus:outline-none focus:border-teal-500/50" />
+              </div>
+          </div>
+          {loadingVod ? (
+            <div className="flex-1 flex flex-col items-center justify-center text-slate-400 p-8 h-full">
+              <div className="animate-spin w-8 h-8 border-2 border-teal-500 border-t-transparent rounded-full mb-4" />
+              <p className="text-sm">Loading M3U VOD Library...</p>
+            </div>
+          ) : (
+            <div className="flex-1 overflow-y-auto p-4 grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-4 auto-rows-max h-full">
+               {filteredChannels.slice(0, 150).map(movie => (
+                  <button key={movie.uid} onClick={() => handlePlay(movie)} className="flex flex-col items-start gap-2 group text-left">
+                     <div className="w-full aspect-[2/3] bg-slate-900 rounded-xl overflow-hidden border border-slate-800 relative group-hover:border-teal-500/50 transition-colors shadow-sm shrink-0 flex items-center justify-center">
+                       {movie.logo ? (
+                         <img src={movie.logo} alt={movie.name} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).src = 'https://via.placeholder.com/300x450?text=No+Cover'; }} />
+                       ) : (
+                         <Film className="w-8 h-8 text-slate-700" />
+                       )}
+                     </div>
+                     <div className="w-full px-1">
+                       <h3 className="font-bold text-xs text-slate-200 group-hover:text-teal-400 transition-colors line-clamp-2 leading-tight">{movie.name}</h3>
+                       <p className="text-[10px] text-slate-500 mt-1 line-clamp-1">{movie.group}</p>
+                     </div>
+                  </button>
+               ))}
+               {filteredChannels.length === 0 && (
+                 <div className="col-span-full text-center text-slate-500 py-8 text-sm">No VOD found.</div>
+               )}
+            </div>
+          )}
+        </div>
+      );
+    }
+    
+    if (vodPlaylists.length > 0) {
+      return (
+        <div className="flex-1 flex flex-col p-8 items-center justify-center text-center overflow-y-auto">
+          <Film className="w-12 h-12 text-teal-500/50 mb-4" />
+          <h2 className="text-lg font-bold text-white mb-6">M3U VOD Playlists</h2>
+          <div className="flex flex-col gap-3 w-full max-w-md">
+            {vodPlaylists.map(pl => (
+              <button 
+                key={pl.id}
+                onClick={() => {
+                  const updated = playlists.map(p => ({ ...p, active: p.type === pl.type ? p.id === pl.id : p.active }));
+                  savePlaylists(updated);
+                  setPlaylists(updated);
+                }}
+                className="bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-teal-500/50 text-white font-bold py-4 px-4 rounded-xl transition-all flex items-center justify-between"
+              >
+                <div className="flex flex-col items-start">
+                  <span className="text-sm">{pl.name}</span>
+                  <span className="text-[10px] text-slate-400 font-normal">{pl.url}</span>
+                </div>
+                <span className="text-xs bg-teal-500/20 text-teal-400 px-3 py-1.5 rounded-lg">Load VOD</span>
+              </button>
+            ))}
+          </div>
+          
+          <div className="mt-12 text-slate-500 text-xs text-center border-t border-slate-800 pt-6 max-w-md w-full">
+            <p>If you intended to use an Xtream Codes API instead of M3U, you can configure it below.</p>
+            {isRouteAdmin && isAdmin && (
+              <button onClick={() => setShowXtreamModal(true)} className="mt-4 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-lg transition-colors text-xs">
+                Setup Xtream VOD
+              </button>
+            )}
+          </div>
+        </div>
+      );
+    }
+
     if (!xtreamConfigured) {
       return (
         <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-slate-400 h-full overflow-y-auto">
@@ -324,9 +472,14 @@ export default function App() {
           <h2 className="text-lg font-bold text-white mb-2">VOD (Movies & Series)</h2>
           <p className="text-sm max-w-sm mb-6">Movies and Series are not currently set up. Please contact the administrator or check backend synchronization.</p>
           {isRouteAdmin && isAdmin && (
-            <button onClick={() => setShowXtreamModal(true)} className="px-6 py-2.5 bg-teal-500 hover:bg-teal-400 text-teal-950 font-bold rounded-xl transition-colors text-sm">
-              Setup VOD Config
-            </button>
+            <div className="flex flex-col gap-3">
+              <button onClick={() => setShowXtreamModal(true)} className="px-6 py-2.5 bg-teal-500 hover:bg-teal-400 text-teal-950 font-bold rounded-xl transition-colors text-sm shadow-[0_0_15px_rgba(20,184,166,0.3)]">
+                Setup Xtream API
+              </button>
+              <button onClick={() => { setShowAddModal(true); setNewPlType('vod'); }} className="px-6 py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl transition-colors text-sm border border-slate-700">
+                Add M3U VOD Playlist
+              </button>
+            </div>
           )}
         </div>
       );
@@ -334,6 +487,7 @@ export default function App() {
 
     return (
       <div className="flex-1 flex flex-col h-full overflow-hidden">
+        {sourceSelector}
         <div className="flex bg-[#0a0a0a] border-b border-white/5 p-2 gap-2 shrink-0">
           <button 
             onClick={() => setVodType('movies')} 
@@ -362,8 +516,13 @@ export default function App() {
             <p className="text-sm">Loading {vodType === 'movies' ? 'Movie Library' : 'TV Series'}...</p>
           </div>
         ) : xtreamError ? (
-           <div className="p-6 mt-4">
-             <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-4 rounded-xl text-sm break-words">{xtreamError}</div>
+           <div className="p-6 mt-4 flex flex-col items-center">
+             <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-4 rounded-xl text-sm break-words mb-4">{xtreamError}</div>
+             {isRouteAdmin && isAdmin && (
+               <button onClick={clearXtreamConfig} className="px-4 py-2 font-bold text-red-400 border border-red-500/30 rounded-lg hover:bg-red-500/10 transition-colors">
+                 Clear Xtream Config
+               </button>
+             )}
            </div>
         ) : (
           <div className="flex-1 overflow-y-auto p-4 grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-4 auto-rows-max h-full">
@@ -406,6 +565,43 @@ export default function App() {
     );
   };
 
+  if (isRouteAdmin && !isAdmin) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4">
+        <div className="bg-slate-900 border border-slate-800 p-8 rounded-2xl w-full max-w-sm shadow-2xl">
+          <div className="w-16 h-16 bg-teal-500/20 rounded-2xl flex items-center justify-center mx-auto mb-6">
+            <Settings className="w-8 h-8 text-teal-500" />
+          </div>
+          <h1 className="text-xl font-bold text-center text-white mb-6">Admin Authentication</h1>
+          <form onSubmit={(e) => {
+            e.preventDefault();
+            if (adminLoginInput === 'shakil10') {
+              setIsAdmin(true);
+            } else {
+              alert('Incorrect password');
+              setAdminLoginInput('');
+            }
+          }} className="space-y-4">
+            <input 
+              type="password" 
+              value={adminLoginInput}
+              onChange={(e) => setAdminLoginInput(e.target.value)}
+              placeholder="Enter Admin Password" 
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-teal-500"
+              autoFocus
+            />
+            <button type="submit" className="w-full bg-teal-600 hover:bg-teal-500 text-white font-bold rounded-xl py-3 shadow-lg shadow-teal-500/20 transition-all">
+              Login
+            </button>
+            <button type="button" onClick={() => window.location.href = '/'} className="w-full text-slate-400 hover:text-white text-sm py-2">
+              Return to App
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-[100dvh] w-full bg-[#0a0a0a] text-slate-200 overflow-hidden font-sans">
       {/* Header */}
@@ -446,12 +642,16 @@ export default function App() {
               <Plus className="w-4 h-4" />
             </button>
           )}
-          {isRouteAdmin && isAdmin && (
-            <button onClick={() => setShowDirectModal(true)} className="p-2 bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 hover:text-white rounded-lg transition-all" title="Direct Play">
-              <FolderOpen className="w-4 h-4" />
-            </button>
-          )}
-          <button onClick={() => loadPlaylist(activePlaylist)} className="p-2 bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 hover:text-white rounded-lg transition-all" title="Reload">
+          <button onClick={() => setShowDirectModal(true)} className="p-2 bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 hover:text-white rounded-lg transition-all" title="Direct Play">
+            <FolderOpen className="w-4 h-4" />
+          </button>
+          <button onClick={() => {
+            if (activeTab === 'vod' && activeVodPlaylist) {
+              loadPlaylist(activeVodPlaylist, setM3uVodChannels, setLoadingVodM3u, setVodError);
+            } else if (activeLivePlaylist) {
+              loadPlaylist(activeLivePlaylist, setChannels, setLoading, setError);
+            }
+          }} className="p-2 bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 hover:text-white rounded-lg transition-all" title="Reload">
             <RefreshCw className="w-4 h-4" />
           </button>
         </div>
@@ -509,14 +709,27 @@ export default function App() {
           <div className="flex-1 overflow-y-auto overflow-x-hidden flex flex-col">
             {activeTab === 'channels' && (
               <div className="flex flex-col h-full">
-                <div className="p-3 shrink-0">
+                <div className="p-3 shrink-0 flex flex-col gap-2">
+                  {playlists.filter(p => p.type !== 'vod').length > 1 && (
+                    <select
+                      value={activeLivePlaylist?.id || ''}
+                      onChange={(e) => {
+                        const updated = playlists.map(p => ({ ...p, active: p.type !== 'vod' ? p.id === e.target.value : p.active }));
+                        setPlaylists(updated);
+                        savePlaylists(updated);
+                      }}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-sm focus:outline-none focus:border-teal-500/50 focus:bg-white/10 appearance-none cursor-pointer text-slate-300"
+                    >
+                      {playlists.filter(p => p.type !== 'vod').map(p => <option className="bg-slate-900 text-slate-200" key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  )}
                   <select 
                     value={groupFilter} 
                     onChange={(e) => setGroupFilter(e.target.value)}
                     className="w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-sm focus:outline-none focus:border-teal-500/50 focus:bg-white/10 appearance-none cursor-pointer"
                   >
-                    <option value="">All Groups ({channels.length})</option>
-                    {groups.map(g => <option key={g} value={g}>{g}</option>)}
+                    <option className="bg-slate-900 text-slate-200" value="">All Groups ({channels.length})</option>
+                    {groups.map(g => <option className="bg-slate-900 text-slate-200" key={g} value={g}>{g}</option>)}
                   </select>
                 </div>
                 
@@ -565,24 +778,13 @@ export default function App() {
                       <div className="font-bold text-sm mb-1 break-words">{pl.name} {pl.isDefault && <span className="text-[10px] text-teal-400 ml-2 tracking-wide">DEFAULT</span>}{pl.type === 'vod' && <span className="text-[10px] text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded ml-2 tracking-wide font-bold">VOD</span>}</div>
                       <div className="text-xs text-slate-500 truncate mb-4">{pl.url}</div>
                       <div className="flex gap-2">
-                        <button 
-                          onClick={() => {
-                            const updated = playlists.map(p => ({ ...p, active: p.id === pl.id }));
-                            setPlaylists(updated);
-                            savePlaylists(updated);
-                            setActiveTab('channels');
-                          }}
-                          className={`flex-1 py-1.5 rounded-lg text-xs font-bold border transition-colors ${pl.active ? 'bg-teal-600 border-teal-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'}`}
-                        >
-                          {pl.active ? 'Active' : 'Load'}
-                        </button>
                         {(!pl.isDefault && isRouteAdmin && isAdmin) && (
                           <button 
                             onClick={() => {
                               const updated = playlists.filter(p => p.id !== pl.id);
-                              if (pl.active && updated.length > 0) updated[0].active = true;
                               setPlaylists(updated);
                               savePlaylists(updated);
+                              publishConfigToFirebase(updated);
                             }}
                             className="px-3 py-1.5 rounded-lg text-xs font-bold border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors"
                           >
@@ -654,10 +856,15 @@ export default function App() {
                       {backendError}
                     </div>
                   )}
+                  {backendSuccess && (
+                    <div className="p-3 bg-teal-500/10 border border-teal-500/20 text-teal-400 text-xs rounded-xl">
+                      {backendSuccess}
+                    </div>
+                  )}
 
                   <div className="flex gap-3 pt-2">
                      <button 
-                       onClick={() => syncFromBackend('')} 
+                       onClick={() => publishConfigToFirebase()} 
                        disabled={backendSyncing}
                        className="flex-1 py-3 bg-teal-600 hover:bg-teal-500 active:bg-teal-700 text-white font-bold rounded-xl shadow-lg shadow-teal-500/20 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
                      >
@@ -679,7 +886,7 @@ export default function App() {
                                 username: xtreamUser,
                                 password: xtreamPass
                               },
-                              playlists: playlists.filter(p => !p.id.startsWith('remote_')).map(p => ({
+                              playlists: playlists.map(p => ({
                                 name: p.name,
                                 url: p.url,
                                 type: p.type
@@ -709,7 +916,7 @@ export default function App() {
                       placeholder="Paste your JSON configuration block here..."
                     ></textarea>
                     <button 
-                      onClick={() => {
+                      onClick={async () => {
                         try {
                           const val = customJsonInput;
                           let data;
@@ -743,7 +950,6 @@ export default function App() {
                               }
                               fixedVal += c;
                             }
-                            // Also try changing trailing commas if possible, but relax for now
                             data = JSON.parse(fixedVal);
                           }
                           
@@ -771,7 +977,9 @@ export default function App() {
                               active: false,
                               type: pl.type || 'live'
                             }));
-                            const combined = [...currentPls, ...newPls];
+                            const newUrls = new Set(newPls.map((p: any) => p.url));
+                            const currentPlsDeduped = currentPls.filter(p => !newUrls.has(p.url));
+                            const combined = [...currentPlsDeduped, ...newPls];
                             savePlaylists(combined);
                             setPlaylists(getPlaylists());
                           }
@@ -779,8 +987,15 @@ export default function App() {
                           localStorage.setItem('custom_json_config', JSON.stringify(data, null, 2));
                           localStorage.removeItem('backend_api_url');
                           
+                          // Also publish to firebase!
+                          try {
+                             await updateConfig(data);
+                          } catch(err) {
+                             console.warn("Could not publish to firebase", err);
+                          }
+                          
                           setActiveTab('channels');
-                          alert("Configuration applied successfully!");
+                          alert("Configuration applied and published successfully!");
                         } catch (e: any) {
                           alert("Invalid JSON. Please ensure it is formatted correctly. Error: " + e.message);
                         }
@@ -837,14 +1052,29 @@ export default function App() {
                   {/* Mobile Mobile Channels */}
                   {activeTab === 'channels' && (
                     <div className="flex flex-col h-full">
+                      {playlists.filter(p => p.type !== 'vod').length > 1 && (
+                        <div className="p-2.5 shrink-0 pb-0">
+                          <select
+                            value={activeLivePlaylist?.id || ''}
+                            onChange={(e) => {
+                              const updated = playlists.map(p => ({ ...p, active: p.type !== 'vod' ? p.id === e.target.value : p.active }));
+                              setPlaylists(updated);
+                              savePlaylists(updated);
+                            }}
+                            className="w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-sm focus:outline-none focus:border-teal-500/50 focus:bg-white/10 appearance-none cursor-pointer text-slate-300"
+                          >
+                            {playlists.filter(p => p.type !== 'vod').map(p => <option className="bg-slate-900 text-slate-200" key={p.id} value={p.id}>{p.name}</option>)}
+                          </select>
+                        </div>
+                      )}
                       <div className="p-2.5 shrink-0 flex gap-2">
                         <div className="relative flex-1">
                           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
                           <input type="text" placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-lg py-1.5 pl-8 pr-3 text-xs focus:outline-none focus:border-teal-500/50" />
                         </div>
                         <select value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)} className="w-1/3 bg-white/5 border border-white/10 rounded-lg py-1.5 px-2 text-xs focus:outline-none focus:border-teal-500/50 appearance-none">
-                          <option value="">All</option>
-                          {groups.map(g => <option key={g} value={g}>{g}</option>)}
+                          <option className="bg-slate-900 text-slate-200" value="">All</option>
+                          {groups.map(g => <option className="bg-slate-900 text-slate-200" key={g} value={g}>{g}</option>)}
                         </select>
                       </div>
                       
@@ -887,24 +1117,13 @@ export default function App() {
                              <div className="font-bold text-sm mb-1 break-words">{pl.name} {pl.isDefault && <span className="text-[10px] text-teal-400 ml-2 tracking-wide">DEFAULT</span>}{pl.type === 'vod' && <span className="text-[10px] text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded ml-2 tracking-wide font-bold">VOD</span>}</div>
                              <div className="text-xs text-slate-500 truncate mb-4">{pl.url}</div>
                              <div className="flex gap-2">
-                               <button 
-                                 onClick={() => {
-                                   const updated = playlists.map(p => ({ ...p, active: p.id === pl.id }));
-                                   setPlaylists(updated);
-                                   savePlaylists(updated);
-                                   setActiveTab('channels');
-                                 }} 
-                                 className={`flex-1 py-2 rounded-lg text-xs font-bold transition-colors border ${pl.active ? 'bg-teal-600 border-teal-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-300'}`}
-                               >
-                                 {pl.active ? 'Active' : 'Load'}
-                               </button>
                                {(!pl.isDefault && isRouteAdmin && isAdmin) && (
                                  <button 
                                    onClick={() => {
                                      const updated = playlists.filter(p => p.id !== pl.id);
-                                     if (pl.active && updated.length > 0) updated[0].active = true;
                                      setPlaylists(updated);
                                      savePlaylists(updated);
+                                     publishConfigToFirebase(updated);
                                    }}
                                    className="px-4 py-2 rounded-lg text-xs font-bold border border-red-500/30 text-red-400 bg-red-500/10 hover:bg-red-500/20 transition-colors flex items-center justify-center shrink-0"
                                  >
@@ -959,10 +1178,15 @@ export default function App() {
                             {backendError}
                           </div>
                         )}
+                        {backendSuccess && (
+                          <div className="p-3 bg-teal-500/10 border border-teal-500/20 text-teal-400 text-xs rounded-xl">
+                            {backendSuccess}
+                          </div>
+                        )}
 
                         <div className="flex flex-col gap-3 pt-2">
                            <button 
-                             onClick={() => syncFromBackend('')} 
+                             onClick={() => publishConfigToFirebase()} 
                              disabled={backendSyncing}
                              className="w-full py-3 bg-teal-600 hover:bg-teal-500 active:bg-teal-700 text-white font-bold rounded-xl shadow-lg shadow-teal-500/20 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
                            >
@@ -984,7 +1208,7 @@ export default function App() {
                                       username: xtreamUser,
                                       password: xtreamPass
                                     },
-                                    playlists: playlists.filter(p => !p.id.startsWith('remote_')).map(p => ({
+                                    playlists: playlists.map(p => ({
                                       name: p.name,
                                       url: p.url,
                                       type: p.type
@@ -1075,7 +1299,9 @@ export default function App() {
                                     active: false,
                                     type: pl.type || 'live'
                                   }));
-                                  const combined = [...currentPls, ...newPls];
+                                  const newUrls = new Set(newPls.map((p: any) => p.url));
+                                  const currentPlsDeduped = currentPls.filter(p => !newUrls.has(p.url));
+                                  const combined = [...currentPlsDeduped, ...newPls];
                                   savePlaylists(combined);
                                   setPlaylists(getPlaylists());
                                 }
@@ -1125,8 +1351,8 @@ export default function App() {
               <div>
                 <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Playlist Type</label>
                 <select value={newPlType} onChange={(e) => setNewPlType(e.target.value as 'live'|'vod')} className="w-full bg-slate-800 border border-slate-700 rounded-xl py-2.5 px-4 focus:outline-none focus:border-teal-500 transition-colors text-white">
-                  <option value="live">Live TV Channels</option>
-                  <option value="vod">VOD (Movies & Series)</option>
+                  <option className="bg-slate-900 text-slate-200" value="live">Live TV Channels</option>
+                  <option className="bg-slate-900 text-slate-200" value="vod">VOD (Movies & Series)</option>
                 </select>
               </div>
               <div className="pt-2 flex justify-end gap-3">

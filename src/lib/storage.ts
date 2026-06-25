@@ -14,21 +14,14 @@ const DEFAULT_PLAYLISTS: Playlist[] = [
 export function getPlaylists(): Playlist[] {
   try {
     const saved = JSON.parse(localStorage.getItem('stv_playlists') || 'null');
-    if (!saved) return DEFAULT_PLAYLISTS.map(p => ({ ...p }));
+    if (!saved || saved.length === 0) return DEFAULT_PLAYLISTS.map(p => ({ ...p }));
     
     // Remove legacy playlists
     const cleaned = saved.filter((p: Playlist) => p.id !== 'bdix' && p.id !== 'pirates');
     
-    // Ensure default playlists exist
-    DEFAULT_PLAYLISTS.forEach(def => {
-      const existing = cleaned.find((p: Playlist) => p.id === def.id);
-      if (!existing) cleaned.unshift({ ...def });
-      else {
-        existing.isDefault = true;
-        existing.url = def.url;
-        existing.name = def.name;
-      }
-    });
+    if (cleaned.length === 0) {
+      return DEFAULT_PLAYLISTS.map(p => ({ ...p }));
+    }
     
     return cleaned;
   } catch {
