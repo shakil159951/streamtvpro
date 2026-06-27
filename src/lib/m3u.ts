@@ -11,7 +11,22 @@ export function parseM3U(text: string): Channel[] {
     const line = lines[i];
     if (line.startsWith('#EXTINF:')) {
       current = {};
-      current.name = line.replace(/#EXTINF:[^,]*,/, '').trim() || 'Unknown';
+      let inQuotes = false;
+      let commaIdx = -1;
+      for (let j = 0; j < line.length; j++) {
+          if (line[j] === '"') inQuotes = !inQuotes;
+          if (line[j] === ',' && !inQuotes) {
+              commaIdx = j;
+              break;
+          }
+      }
+      
+      if (commaIdx !== -1) {
+          current.name = line.substring(commaIdx + 1).trim() || 'Unknown';
+      } else {
+          current.name = line.replace(/#EXTINF:[^,]*,/, '').trim() || 'Unknown';
+      }
+      
       const logoMatch = line.match(/tvg-logo="([^"]*)"/);
       const groupMatch = line.match(/group-title="([^"]*)"/);
       const idMatch = line.match(/tvg-id="([^"]*)"/);
