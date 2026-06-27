@@ -191,6 +191,9 @@ export default function Player({ channel }: PlayerProps) {
         }
 
         const dashPlayer = dashjs.MediaPlayer().create();
+        dashPlayer.updateSettings({
+            streaming: { retryAttempts: { MPD: 0 } }
+        });
         dashRef.current = dashPlayer;
         
         dashPlayer.on(dashjs.MediaPlayer.events.ERROR, (e: any) => {
@@ -311,6 +314,8 @@ export default function Player({ channel }: PlayerProps) {
             enableWorker: true, 
             lowLatencyMode: false, 
             backBufferLength: 90,
+            manifestLoadingMaxRetry: 0,
+            manifestLoadingTimeOut: 4000,
             xhrSetup: (xhr, url) => {
                 if (proxyIdx > 0) {
                     xhr.open('GET', getProxiedUrl(url, proxyIdx), true);
@@ -345,10 +350,24 @@ export default function Player({ channel }: PlayerProps) {
         hls.on(Hls.Events.ERROR, (_, data) => {
             if (data.fatal) {
                 if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-                    const response = data.response;
-                    if (response && (response.code === 403 || response.code === 401 || response.code === 404)) {
-                        hls.destroy();
-                        setError(`Stream access denied or not found (${response.code}). Retrying in 5s...`);
+                    if (proxyIdx < maxProxyIndex) {
+                        initHls(proxyIdx + 1);
+                    } else {
+                        const response = data.response;
+                        if (response && (response.code === 403 || response.code === 401 || response.code === 404)) {
+                            hls.destroy();
+                            setError(`Stream access denied or not found (${response.code}). Retrying in 5s...`);
+                        } else {
+                            const isIp = /http:\/\/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/.test(channel.url);
+                            if (isIp && window.location.protocol === 'https:') {
+                                setError('Connection failed. For BDIX or local IP addresses, you must allow "Insecure Content" in your browser\'s Site Settings for this page.');
+                                setLoading(false);
+                                return;
+                            } else {
+                                setError('Stream blocked by CORS or network timeout. Retrying in 5s...');
+                            }
+                        }
+                        
                         setTimeout(() => {
                             if (hlsRef.current === hls) {
                                 setError('');
@@ -356,25 +375,6 @@ export default function Player({ channel }: PlayerProps) {
                                 initHls(0);
                             }
                         }, 5000);
-                        return;
-                    }
-                    if (proxyIdx < maxProxyIndex) {
-                        initHls(proxyIdx + 1);
-                    } else {
-                        const isIp = /http:\/\/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/.test(channel.url);
-                        if (isIp && window.location.protocol === 'https:') {
-                             setError('Connection failed. For BDIX or local IP addresses, you must allow "Insecure Content" in your browser\'s Site Settings for this page, as Cloud proxies cannot reach your local network.');
-                             setLoading(false);
-                        } else {
-                             setError('Stream blocked by CORS or network timeout. Retrying in 5s...');
-                             setTimeout(() => {
-                                 if (hlsRef.current === hls) {
-                                     setError('');
-                                     setLoading(true);
-                                     initHls(0);
-                                 }
-                             }, 5000);
-                        }
                     }
                 } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
                     hls.recoverMediaError();
@@ -791,18 +791,6 @@ export default function Player({ channel }: PlayerProps) {
             </div>
             
             <div className="p-4 sm:p-6 bg-gradient-to-t from-black/90 via-black/60 to-transparent pointer-events-auto flex flex-col relative w-full items-center justify-end pb-6">
-                {showQualityMenu && levels.length > 1 && (
-                    <div className="absolute bottom-full mb-4 right-4 py-1.5 bg-black/80 glass-card backdrop-blur-xl border border-slate-700/50 rounded-2xl shadow-2xl max-h-56 overflow-y-auto min-w-[140px] z-50 overflow-hidden pointer-events-auto" onClick={(e) => e.stopPropagation()}>
-                        <div className="px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-800 mb-1">Quality</div>
-                        <button onClick={() => selectQuality(-1)} className={`w-full text-left px-5 py-2.5 text-xs font-bold tracking-wide transition-colors ${qualityMode === 'auto' ? 'text-primary bg-primary/10' : 'text-slate-300 hover:bg-white/5 hover:text-white'}`}>Auto</button>
-                        {levels.map((lvl, idx) => (
-                            <button key={idx} onClick={() => selectQuality(idx)} className={`w-full text-left px-5 py-2.5 text-xs font-bold tracking-wide transition-colors ${qualityMode === idx ? 'text-primary bg-primary/10' : 'text-slate-300 hover:bg-white/5 hover:text-white'}`}>
-                                {lvl.height ? `${lvl.height}p` : `${Math.round((lvl.bitrate || 0) / 1000)}kbps`}
-                            </button>
-                        ))}
-                    </div>
-                )}
-                
                 {duration > 0 && duration !== Infinity && (
                     <div className="flex items-center gap-3 w-full max-w-4xl px-4 sm:px-6 mb-3 sm:mb-4">
                         <span className="text-xs font-medium text-slate-300 min-w-[40px] text-right">{formatTime(currentTime)}</span>
