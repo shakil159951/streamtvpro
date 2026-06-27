@@ -127,7 +127,7 @@ export default function Player({ channel }: PlayerProps) {
     let isDestroyed = false;
     const isMixedContent = window.location.protocol === 'https:' && channel.url.startsWith('http://');
 
-    const tryNativeFirst = (nIdx: number) => {
+    const tryNativeFirst = (nIdx: number, isFallback = false) => {
         if (isDestroyed) return;
         const video = videoRef.current;
         if (!video) return;
@@ -140,7 +140,7 @@ export default function Player({ channel }: PlayerProps) {
             video.removeEventListener('error', handleError);
             video.removeEventListener('loadeddata', handleLoaded);
             if (nIdx < maxProxyIndex) {
-                 tryNativeFirst(nIdx + 1);
+                 tryNativeFirst(nIdx + 1, isFallback);
             } else {
                  // Native failed on all proxies, fallback to Dash/Hls/MpegTS
                  if (isTsExt && mpegts.getFeatureList().mseLivePlayback) {
@@ -155,7 +155,12 @@ export default function Player({ channel }: PlayerProps) {
                      setError('Video format not supported by browser (e.g., MKV), or stream is offline. Please try a different proxy or use an external player.');
                      setLoading(false);
                  } else {
-                     initHls(0); // last resort
+                     if (isFallback) {
+                         setError('Stream format not supported or offline.');
+                         setLoading(false);
+                     } else {
+                         initHls(0); // last resort
+                     }
                  }
             }
         };
@@ -375,14 +380,26 @@ export default function Player({ channel }: PlayerProps) {
                     hls.recoverMediaError();
                 } else {
                     hls.destroy();
-                    setError('Playback error. Stream format unsupported.');
-                    setLoading(false);
+                    if (!isM3u8Ext && !isDirectExt && !isDashExt && !isTsExt) {
+                        tryNativeFirst(0, true);
+                    } else {
+                        setError('Playback error. Stream format unsupported.');
+                        setLoading(false);
+                    }
                 }
             }
         });
     };
 
-    tryNativeFirst(0);
+    if (isDashExt) {
+        initDash(0);
+    } else if ((isTsExt || ext === 'flv') && mpegts.getFeatureList().mseLivePlayback) {
+        initMpegts(0);
+    } else if (!isDirectExt && Hls.isSupported()) {
+        initHls(0);
+    } else {
+        tryNativeFirst(0);
+    }
     
     return () => {
         isDestroyed = true;
@@ -728,7 +745,7 @@ export default function Player({ channel }: PlayerProps) {
                   <a href={`vlc://${channel?.url || ''}`} className="flex items-center gap-2 px-4 py-2.5 bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 rounded-xl transition-colors border border-orange-500/30 font-semibold text-sm shadow-lg shadow-orange-500/5">
                     <MonitorPlay className="w-4 h-4" /> Open in VLC
                   </a>
-                  <a href={`intent:${channel?.url || ''}#Intent;package=com.mxtech.videoplayer.ad;end`} className="flex items-center gap-2 px-4 py-2.5 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 rounded-xl transition-colors border border-blue-500/30 font-semibold text-sm shadow-lg shadow-blue-500/5 hidden sm:flex">
+                  <a href={`intent:${channel?.url || ''}#Intent;package=com.mxtech.videoplayer.ad;end`} className="flex items-center gap-2 px-4 py-2.5 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 rounded-xl transition-colors border border-blue-500/30 font-semibold text-sm shadow-lg shadow-blue-500/5">
                     <MonitorPlay className="w-4 h-4" /> MX Player
                   </a>
                   <a href={channel?.url || '#'} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 px-4 py-2.5 bg-slate-700/50 text-slate-300 hover:bg-slate-700 hover:text-white rounded-xl transition-colors border border-slate-600 font-semibold text-sm">

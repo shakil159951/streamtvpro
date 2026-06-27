@@ -6,6 +6,7 @@ export function parseM3U(text: string): Channel[] {
   let current: Partial<Channel> | null = null;
   let referer = '';
   let userAgent = '';
+  const uidCounts: Record<string, number> = {};
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -32,7 +33,15 @@ export function parseM3U(text: string): Channel[] {
       const idMatch = line.match(/tvg-id="([^"]*)"/);
       current.logo = logoMatch ? logoMatch[1] : '';
       current.group = groupMatch ? groupMatch[1] : 'Uncategorized';
-      current.uid = idMatch ? idMatch[1] : `ch-${i}`;
+      
+      let baseUid = idMatch && idMatch[1] ? idMatch[1] : `ch-${i}`;
+      if (uidCounts[baseUid]) {
+          uidCounts[baseUid]++;
+          current.uid = `${baseUid}_${uidCounts[baseUid]}`;
+      } else {
+          uidCounts[baseUid] = 1;
+          current.uid = baseUid;
+      }
       referer = '';
       userAgent = '';
     } else if (line.startsWith('#EXTVLCOPT:http-referrer=')) {
