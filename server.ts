@@ -20,6 +20,8 @@ async function startServer() {
     }
 
     const targetUrl = req.query.url as string;
+    const customReferer = req.query.referer as string;
+    const customUserAgent = req.query.useragent as string;
     
     if (!targetUrl) {
       return res.status(400).send("No target URL provided.");
@@ -43,9 +45,11 @@ async function startServer() {
     // Override sensitive headers to look like a browser directly accessing the stream
     headers["host"] = urlObj.host;
     headers["origin"] = urlObj.origin;
-    headers["referer"] = urlObj.origin + "/";
+    headers["referer"] = customReferer || (urlObj.origin + "/");
     
-    if (!headers["user-agent"]) {
+    if (customUserAgent) {
+        headers["user-agent"] = customUserAgent;
+    } else if (!headers["user-agent"]) {
         headers["user-agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36";
     }
     
@@ -74,7 +78,15 @@ async function startServer() {
         for (const [key, value] of Object.entries(proxyRes.headers)) {
             if (value && !key.toLowerCase().startsWith("access-control-")) {
                 try {
-                  res.setHeader(key, value);
+                  if (key.toLowerCase() === 'location') {
+                      let loc = value as string;
+                      if (!loc.startsWith('http')) {
+                          loc = new URL(loc, targetUrl).href;
+                      }
+                      res.setHeader(key, `/api/proxy?url=${encodeURIComponent(loc)}`);
+                  } else {
+                      res.setHeader(key, value);
+                  }
                 } catch(e) {}
             }
         }
@@ -95,6 +107,12 @@ async function startServer() {
         // console.error("Proxy timeout:", targetUrl);
         if (!res.headersSent) {
             res.status(504).send("Proxy timeout fetching target URL");
+        }
+    });
+    
+    req.on("close", () => {
+        if (!res.writableEnded) {
+            proxyReq.destroy();
         }
     });
     

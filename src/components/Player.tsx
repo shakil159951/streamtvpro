@@ -9,9 +9,8 @@ if (mpegts && mpegts.LoggingControl) {
 
 import { Channel } from '../types';
 import { 
-  Play, Pause, Maximize, Minimize, 
-  Settings, AlertCircle, ExternalLink, MonitorPlay, PictureInPicture,
-  Volume2, VolumeX, RotateCcw, RotateCw
+  Play, Pause, Maximize, Minimize, Settings, AlertCircle, MonitorPlay, PictureInPicture,
+  Volume2, VolumeX, RotateCcw, RotateCw, Subtitles, Music, ExternalLink
 } from 'lucide-react';
 
 interface PlayerProps {
@@ -40,7 +39,18 @@ export default function Player({ channel }: PlayerProps) {
   const [showQualityMenu, setShowQualityMenu] = useState(false);
   
   const [levels, setLevels] = useState<any[]>([]);
+  
+  // Subtitles & Audio
+  const [subtitleTracks, setSubtitleTracks] = useState<{id: number, label: string}[]>([]);
+  const [activeSubtitleTrack, setActiveSubtitleTrack] = useState<number>(-1);
+  const [showSubtitleMenu, setShowSubtitleMenu] = useState(false);
+
+  const [audioTracks, setAudioTracks] = useState<{id: number, label: string}[]>([]);
+  const [activeAudioTrack, setActiveAudioTrack] = useState<number>(-1);
+  const [showAudioMenu, setShowAudioMenu] = useState(false);
+  
   const overlayTimer = useRef<NodeJS.Timeout | null>(null);
+  const hasResumed = useRef(false);
 
   useEffect(() => {
     if (!channel || !videoRef.current) return;
@@ -52,6 +62,13 @@ export default function Player({ channel }: PlayerProps) {
     setLevels([]);
     setQualityMode('auto');
     setShowQualityMenu(false);
+    setSubtitleTracks([]);
+    setActiveSubtitleTrack(-1);
+    setShowSubtitleMenu(false);
+    setAudioTracks([]);
+    setActiveAudioTrack(-1);
+    setShowAudioMenu(false);
+    hasResumed.current = false;
     
     if (hlsRef.current) {
         hlsRef.current.destroy();
@@ -72,6 +89,7 @@ export default function Player({ channel }: PlayerProps) {
     const isM3u8Ext = ext === 'm3u8' || channel.url.includes('.m3u8');
     const isDashExt = ext === 'mpd' || channel.url.includes('.mpd');
     const isTsExt = ext === 'ts' || (channel.url.includes('.ts') && !isM3u8Ext && !isDashExt);
+    const isDirectExt = directExts.includes(ext) || (!isM3u8Ext && !isDashExt && !isTsExt);
     
     const PROXIES = [
         '',
@@ -85,6 +103,16 @@ export default function Player({ channel }: PlayerProps) {
     const getProxiedUrl = (url: string, proxyIdx: number): string => {
         if (proxyIdx === 0) return url;
         const p = PROXIES[proxyIdx];
+        if (p.includes('/api/proxy?url=')) {
+            let resUrl = p + encodeURIComponent(url);
+            if (channel.referer) {
+                resUrl += `&referer=${encodeURIComponent(channel.referer)}`;
+            }
+            if (channel.userAgent) {
+                resUrl += `&useragent=${encodeURIComponent(channel.userAgent)}`;
+            }
+            return resUrl;
+        }
         if (p.includes('thingproxy') || p.includes('codetabs')) {
             return p + url;
         }
@@ -113,6 +141,9 @@ export default function Player({ channel }: PlayerProps) {
                      initHls(0);
                  } else if (ext === 'flv' && mpegts.getFeatureList().mseLivePlayback) {
                      initMpegts(0);
+                 } else if (isDirectExt) {
+                     setError('Video format not supported by browser (e.g., MKV), or stream is offline. Please try a different proxy or use an external player.');
+                     setLoading(false);
                  } else {
                      initHls(0); // last resort
                  }
@@ -153,6 +184,21 @@ export default function Player({ channel }: PlayerProps) {
         });
         dashPlayer.on(dashjs.MediaPlayer.events.PLAYBACK_PLAYING, () => {
              setLoading(false);
+        });
+        
+        dashPlayer.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, () => {
+             try {
+                 const audioT = dashPlayer.getTracksFor('audio');
+                 if (audioT && audioT.length > 0) {
+                     setAudioTracks(audioT.map((t: any, i: number) => ({ id: i, label: t.lang || t.roles?.[0] || `Track ${i+1}` })));
+                     const currAudio = dashPlayer.getCurrentTrackFor('audio');
+                     setActiveAudioTrack(currAudio ? audioT.findIndex((t: any) => t === currAudio) : 0);
+                 }
+                 const textT = dashPlayer.getTracksFor('text');
+                 if (textT && textT.length > 0) {
+                     setSubtitleTracks(textT.map((t: any, i: number) => ({ id: i, label: t.lang || t.roles?.[0] || `Track ${i+1}` })));
+                 }
+             } catch(e) {}
         });
 
         dashPlayer.initialize(videoRef.current as HTMLMediaElement, getProxiedUrl(channel.url, proxyIdx), true);
@@ -245,14 +291,34 @@ export default function Player({ channel }: PlayerProps) {
             setLoading(false);
         });
         
+        hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, (_, data) => {
+            if (data.subtitleTracks && data.subtitleTracks.length > 0) {
+               setSubtitleTracks(data.subtitleTracks.map(t => ({ id: t.id, label: t.name || t.lang || `Track ${t.id}` })));
+               setActiveSubtitleTrack(-1);
+            }
+        });
+
+        hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, (_, data) => {
+            if (data.audioTracks && data.audioTracks.length > 0) {
+               setAudioTracks(data.audioTracks.map(t => ({ id: t.id, label: t.name || t.lang || `Track ${t.id}` })));
+               setActiveAudioTrack(hls.audioTrack);
+            }
+        });
+        
         hls.on(Hls.Events.ERROR, (_, data) => {
             if (data.fatal) {
                 if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
                     const response = data.response;
                     if (response && (response.code === 403 || response.code === 401 || response.code === 404)) {
                         hls.destroy();
-                        setError(`Stream access denied or not found (${response.code}).`);
-                        setLoading(false);
+                        setError(`Stream access denied or not found (${response.code}). Retrying in 5s...`);
+                        setTimeout(() => {
+                            if (hlsRef.current === hls) {
+                                setError('');
+                                setLoading(true);
+                                initHls(0);
+                            }
+                        }, 5000);
                         return;
                     }
                     if (proxyIdx < maxProxyIndex) {
@@ -261,10 +327,17 @@ export default function Player({ channel }: PlayerProps) {
                         const isIp = /http:\/\/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/.test(channel.url);
                         if (isIp && window.location.protocol === 'https:') {
                              setError('Connection failed. For BDIX or local IP addresses, you must allow "Insecure Content" in your browser\'s Site Settings for this page, as Cloud proxies cannot reach your local network.');
+                             setLoading(false);
                         } else {
-                             setError('Stream blocked by CORS or network timeout. Proxies exhausted.');
+                             setError('Stream blocked by CORS or network timeout. Retrying in 5s...');
+                             setTimeout(() => {
+                                 if (hlsRef.current === hls) {
+                                     setError('');
+                                     setLoading(true);
+                                     initHls(0);
+                                 }
+                             }, 5000);
                         }
-                        setLoading(false);
                     }
                 } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
                     hls.recoverMediaError();
@@ -340,6 +413,22 @@ export default function Player({ channel }: PlayerProps) {
           setLiveDelay(delay);
       } else {
           setLiveDelay(null);
+      }
+
+      // Resume & Save Progress for VODs
+      if (video.duration && video.duration < Infinity && channel) {
+          if (!hasResumed.current && video.currentTime > 0) {
+             hasResumed.current = true;
+             const saved = localStorage.getItem(`progress_${channel.uid}`);
+             if (saved) {
+                const time = parseFloat(saved);
+                if (time > 0 && time < video.duration - 15) {
+                   video.currentTime = time;
+                }
+             }
+          } else if (hasResumed.current && video.currentTime > 15) {
+             localStorage.setItem(`progress_${channel.uid}`, video.currentTime.toString());
+          }
       }
     };
 
@@ -426,6 +515,27 @@ export default function Player({ channel }: PlayerProps) {
       hlsRef.current.currentLevel = idx;
       setQualityMode(idx === -1 ? 'auto' : idx);
       setShowQualityMenu(false);
+  };
+
+  const selectSubtitle = (idx: number) => {
+      if (hlsRef.current) {
+          hlsRef.current.subtitleTrack = idx;
+      } else if (dashRef.current) {
+          dashRef.current.setTextTrack(idx);
+      }
+      setActiveSubtitleTrack(idx);
+      setShowSubtitleMenu(false);
+  };
+
+  const selectAudio = (idx: number) => {
+      if (hlsRef.current) {
+          hlsRef.current.audioTrack = idx;
+      } else if (dashRef.current) {
+          const tracks = dashRef.current.getTracksFor('audio');
+          if (tracks && tracks[idx]) dashRef.current.setCurrentTrack(tracks[idx]);
+      }
+      setActiveAudioTrack(idx);
+      setShowAudioMenu(false);
   };
 
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -526,28 +636,32 @@ export default function Player({ channel }: PlayerProps) {
         )}
         
         {loading && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900/90 z-10 pointer-events-none">
-                <div className="animate-spin w-12 h-12 border-4 border-teal-500 border-t-transparent rounded-full mb-4 shadow-[0_0_15px_rgba(20,184,166,0.5)]" />
-                <h3 className="text-lg font-bold text-white tracking-widest uppercase text-xs">Connecting Signal...</h3>
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 backdrop-blur-md z-10 pointer-events-none transition-all duration-500">
+                <div className="relative flex items-center justify-center">
+                   <div className="absolute inset-0 border-2 border-white/10 rounded-full w-12 h-12"></div>
+                   <div className="animate-spin w-12 h-12 border-2 border-teal-500 border-t-transparent border-l-transparent rounded-full shadow-[0_0_15px_rgba(20,184,166,0.3)]" />
+                </div>
+                <h3 className="mt-6 text-teal-400 font-semibold tracking-[0.25em] uppercase text-[10px] animate-pulse">Connecting</h3>
             </div>
         )}
         
         {error && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900/90 z-10">
-                <div className="w-16 h-16 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center mb-4">
-                  <AlertCircle className="w-8 h-8" />
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-xl z-10 transition-all duration-500">
+                <div className="w-16 h-16 bg-red-500/5 border border-red-500/10 text-red-500 rounded-full flex items-center justify-center mb-6 shadow-[0_0_30px_rgba(239,68,68,0.15)]">
+                  <AlertCircle className="w-7 h-7" />
                 </div>
-                <h3 className="text-xl font-bold text-white mb-2">Stream Unavailable</h3>
-                <p className="text-slate-400 mb-6 px-4 text-center max-w-sm">{error}</p>
-                <div className="flex flex-col sm:flex-row gap-3">
-                    <button onClick={() => window.location.reload()} className="px-6 py-2.5 bg-teal-600 hover:bg-teal-500 text-white rounded-xl font-bold transition-colors uppercase tracking-widest text-xs shadow-[0_0_15px_rgba(20,184,166,0.2)]">
-                      Retry Connection
-                    </button>
-                    {channel && (
-                      <a href={`intent://${channel.url.replace(/^https?:\/\//, '')}#Intent;scheme=${channel.url.startsWith('https')?'https':'http'};type=video/*;end`} className="px-6 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-bold transition-colors uppercase tracking-widest text-xs flex items-center justify-center gap-2 border border-slate-700">
-                        <ExternalLink className="w-4 h-4" /> Open in External Player
-                      </a>
-                    )}
+                <h3 className="text-xl font-bold text-white mb-2 tracking-wide">Playback Interrupted</h3>
+                <p className="text-slate-400 mb-6 px-4 text-center max-w-sm text-sm leading-relaxed">{error}</p>
+                <div className="flex flex-wrap items-center justify-center gap-3 px-4">
+                  <a href={`vlc://${channel?.url || ''}`} className="flex items-center gap-2 px-4 py-2.5 bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 rounded-xl transition-colors border border-orange-500/30 font-semibold text-sm shadow-lg shadow-orange-500/5">
+                    <MonitorPlay className="w-4 h-4" /> Open in VLC
+                  </a>
+                  <a href={`intent:${channel?.url || ''}#Intent;package=com.mxtech.videoplayer.ad;end`} className="flex items-center gap-2 px-4 py-2.5 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 rounded-xl transition-colors border border-blue-500/30 font-semibold text-sm shadow-lg shadow-blue-500/5 hidden sm:flex">
+                    <MonitorPlay className="w-4 h-4" /> MX Player
+                  </a>
+                  <a href={channel?.url || '#'} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 px-4 py-2.5 bg-slate-700/50 text-slate-300 hover:bg-slate-700 hover:text-white rounded-xl transition-colors border border-slate-600 font-semibold text-sm">
+                    <ExternalLink className="w-4 h-4" /> Open Link
+                  </a>
                 </div>
             </div>
         )}
@@ -576,13 +690,15 @@ export default function Player({ channel }: PlayerProps) {
                 </div>
             </div>
             
-            <div className="flex-1 flex items-center justify-center pointer-events-auto">
+            <div className="flex-1 flex items-center justify-center pointer-events-none">
+              {!loading && !error && (
                 <button 
                   onClick={togglePlay} 
-                  className={`w-14 h-14 sm:w-20 sm:h-20 rounded-full bg-black/40 backdrop-blur-md border border-white/10 text-white flex items-center justify-center transition-all hover:scale-105 hover:border-teal-400/50 hover:text-teal-400 hover:bg-black/60 shadow-[0_8px_32px_rgba(0,0,0,0.3)] hover:shadow-[0_0_30px_rgba(20,184,166,0.3)] ${showOverlay ? 'scale-100 opacity-100' : 'scale-75 opacity-0'}`}
+                  className={`pointer-events-auto w-16 h-16 sm:w-24 sm:h-24 rounded-full bg-black/30 backdrop-blur-xl border border-white/10 text-white flex items-center justify-center transition-all duration-500 hover:scale-110 hover:border-teal-500/50 hover:text-teal-400 hover:bg-black/50 shadow-[0_8px_32px_rgba(0,0,0,0.3)] hover:shadow-[0_0_40px_rgba(20,184,166,0.3)] ${showOverlay ? 'scale-100 opacity-100' : 'scale-50 opacity-0 pointer-events-none'}`}
                 >
-                    {isPlaying ? <Pause className="w-6 h-6 sm:w-8 sm:h-8 fill-current" /> : <Play className="w-6 h-6 sm:w-8 sm:h-8 fill-current ml-1" />}
+                    {isPlaying ? <Pause className="w-8 h-8 sm:w-10 sm:h-10 fill-current" /> : <Play className="w-8 h-8 sm:w-10 sm:h-10 fill-current ml-1.5" />}
                 </button>
+              )}
             </div>
             
             <div className="p-4 sm:p-6 bg-gradient-to-t from-black/90 via-black/60 to-transparent pointer-events-auto flex flex-col relative w-full items-center justify-end pb-6">
@@ -658,10 +774,60 @@ export default function Player({ channel }: PlayerProps) {
                     </div>
                     
                     <div className="flex items-center gap-3 sm:gap-4 shrink-0 transition-opacity duration-300">
+                        {subtitleTracks.length > 0 && (
+                            <div className="relative">
+                                <button onClick={(e) => { e.stopPropagation(); setShowSubtitleMenu(!showSubtitleMenu); setShowQualityMenu(false); setShowAudioMenu(false); }} className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full shrink-0 transition-colors flex items-center justify-center focus:outline-none ${activeSubtitleTrack !== -1 ? 'text-teal-400 bg-teal-500/20' : 'bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white'}`} title="Subtitles">
+                                    <Subtitles className="w-4 h-4 sm:w-5 sm:h-5" />
+                                </button>
+                                {showSubtitleMenu && (
+                                    <div className="absolute bottom-full mb-4 right-0 py-1.5 bg-slate-900/95 backdrop-blur-xl border border-slate-700/50 rounded-2xl shadow-2xl max-h-56 overflow-y-auto min-w-[140px] z-50 overflow-hidden pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+                                        <div className="px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-800 mb-1">Subtitles</div>
+                                        <button onClick={() => selectSubtitle(-1)} className={`w-full text-left px-5 py-2.5 text-xs font-bold tracking-wide transition-colors ${activeSubtitleTrack === -1 ? 'text-teal-400 bg-teal-500/10' : 'text-slate-300 hover:bg-white/5 hover:text-white'}`}>Off</button>
+                                        {subtitleTracks.map((t) => (
+                                            <button key={t.id} onClick={() => selectSubtitle(t.id)} className={`w-full text-left px-5 py-2.5 text-xs font-bold tracking-wide transition-colors ${activeSubtitleTrack === t.id ? 'text-teal-400 bg-teal-500/10' : 'text-slate-300 hover:bg-white/5 hover:text-white'}`}>
+                                                {t.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {audioTracks.length > 1 && (
+                            <div className="relative">
+                                <button onClick={(e) => { e.stopPropagation(); setShowAudioMenu(!showAudioMenu); setShowQualityMenu(false); setShowSubtitleMenu(false); }} className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full shrink-0 transition-colors flex items-center justify-center focus:outline-none ${activeAudioTrack !== -1 ? 'text-teal-400 bg-teal-500/20' : 'bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white'}`} title="Audio Track">
+                                    <Music className="w-4 h-4 sm:w-5 sm:h-5" />
+                                </button>
+                                {showAudioMenu && (
+                                    <div className="absolute bottom-full mb-4 right-0 py-1.5 bg-slate-900/95 backdrop-blur-xl border border-slate-700/50 rounded-2xl shadow-2xl max-h-56 overflow-y-auto min-w-[140px] z-50 overflow-hidden pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+                                        <div className="px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-800 mb-1">Audio Track</div>
+                                        {audioTracks.map((t) => (
+                                            <button key={t.id} onClick={() => selectAudio(t.id)} className={`w-full text-left px-5 py-2.5 text-xs font-bold tracking-wide transition-colors ${activeAudioTrack === t.id ? 'text-teal-400 bg-teal-500/10' : 'text-slate-300 hover:bg-white/5 hover:text-white'}`}>
+                                                {t.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
                         {levels.length > 1 && (
-                            <button onClick={(e) => { e.stopPropagation(); setShowQualityMenu(!showQualityMenu); }} className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full shrink-0 transition-colors flex items-center justify-center focus:outline-none ${qualityMode !== 'auto' ? 'text-teal-400 bg-teal-500/20' : 'bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white'}`} title="Quality Settings">
-                                <Settings className="w-4 h-4 sm:w-5 sm:h-5" />
-                            </button>
+                            <div className="relative">
+                                <button onClick={(e) => { e.stopPropagation(); setShowQualityMenu(!showQualityMenu); setShowSubtitleMenu(false); setShowAudioMenu(false); }} className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full shrink-0 transition-colors flex items-center justify-center focus:outline-none ${qualityMode !== 'auto' ? 'text-teal-400 bg-teal-500/20' : 'bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white'}`} title="Quality Settings">
+                                    <Settings className="w-4 h-4 sm:w-5 sm:h-5" />
+                                </button>
+                                {showQualityMenu && (
+                                    <div className="absolute bottom-full mb-4 right-0 py-1.5 bg-slate-900/95 backdrop-blur-xl border border-slate-700/50 rounded-2xl shadow-2xl max-h-56 overflow-y-auto min-w-[140px] z-50 overflow-hidden pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+                                        <div className="px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-800 mb-1">Quality</div>
+                                        <button onClick={() => selectQuality(-1)} className={`w-full text-left px-5 py-2.5 text-xs font-bold tracking-wide transition-colors ${qualityMode === 'auto' ? 'text-teal-400 bg-teal-500/10' : 'text-slate-300 hover:bg-white/5 hover:text-white'}`}>Auto</button>
+                                        {levels.map((lvl, idx) => (
+                                            <button key={idx} onClick={() => selectQuality(idx)} className={`w-full text-left px-5 py-2.5 text-xs font-bold tracking-wide transition-colors ${qualityMode === idx ? 'text-teal-400 bg-teal-500/10' : 'text-slate-300 hover:bg-white/5 hover:text-white'}`}>
+                                                {lvl.height ? `${lvl.height}p` : `${Math.round((lvl.bitrate || 0) / 1000)}kbps`}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
                         )}
                         
                         <button onClick={toggleFullscreen} className="text-slate-300 hover:text-white transition-colors focus:outline-none" title="Fullscreen">

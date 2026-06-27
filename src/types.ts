@@ -4,6 +4,8 @@ export interface Channel {
   url: string;
   logo: string;
   group: string;
+  referer?: string;
+  userAgent?: string;
 }
 
 export interface Playlist {
