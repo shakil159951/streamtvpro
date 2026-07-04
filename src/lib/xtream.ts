@@ -73,39 +73,43 @@ export class XtreamApi {
     
     const fetchOpts = { cache: 'no-store' as RequestCache };
     
-    try {
+        try {
       const fetchUrl = isMixedContent ? proxyUrl : url;
       const res = await fetch(fetchUrl, fetchOpts);
-      if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        throw new Error(`Network response was not ok (${res.status}): ${text.substring(0, 100)}`);
-      }
+      if (!res.ok) throw new Error('Not ok');
       const text = await res.text();
-      try {
-          return JSON.parse(text);
-      } catch (e) {
-          throw new Error(`Invalid JSON response: ${text.substring(0, 100)}`);
-      }
+      if (text.trim().startsWith('<')) throw new Error('HTML response');
+      return JSON.parse(text);
     } catch (e: any) {
-      if (!isMixedContent && !e.message?.includes('Invalid JSON')) {
-        // Fallback to proxy if direct request fails (likely CORS)
+      if (!isMixedContent) {
         try {
           const res = await fetch(proxyUrl, fetchOpts);
-          if (!res.ok) {
-             const text = await res.text().catch(() => '');
-             throw new Error(`Proxy network response was not ok (${res.status}): ${text.substring(0, 100)}`);
-          }
+          if (!res.ok) throw new Error('Proxy failed');
           const text = await res.text();
-          try {
-              return JSON.parse(text);
-          } catch (err) {
-              throw new Error(`Invalid JSON response (proxy): ${text.substring(0, 100)}`);
-          }
+          if (text.trim().startsWith('<')) throw new Error('HTML response from proxy');
+          return JSON.parse(text);
         } catch (proxyError) {
-           throw proxyError;
+          try {
+            const res = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`, fetchOpts);
+            if (!res.ok) throw new Error('Public proxy failed');
+            const text = await res.text();
+            if (text.trim().startsWith('<')) throw new Error('HTML response from public proxy');
+            return JSON.parse(text);
+          } catch (publicProxyError) {
+            throw publicProxyError;
+          }
         }
+      } else {
+        try {
+            const res = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`, fetchOpts);
+            if (!res.ok) throw new Error('Public proxy failed');
+            const text = await res.text();
+            if (text.trim().startsWith('<')) throw new Error('HTML response from public proxy');
+            return JSON.parse(text);
+          } catch (publicProxyError) {
+            throw publicProxyError;
+          }
       }
-      throw e;
     }
   }
 

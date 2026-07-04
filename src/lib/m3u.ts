@@ -1,5 +1,20 @@
 import { Channel } from '../types';
 
+const buildProxyUrl = (targetUrl: string, ref?: string, ua?: string) => {
+    if (targetUrl.includes('/api/proxy')) return targetUrl;
+    
+    let rewrittenUrl = `/api/proxy?u=${encodeURIComponent(targetUrl)}`;
+    
+    const headers: Record<string, string> = {};
+    if (ref) headers['Referer'] = ref;
+    if (ua) headers['User-Agent'] = ua;
+    
+    if (Object.keys(headers).length > 0) {
+        rewrittenUrl += `&h=${encodeURIComponent(btoa(JSON.stringify(headers)))}`;
+    }
+    return rewrittenUrl;
+};
+
 export function parseM3U(text: string): Channel[] {
   // First, try to parse as JSON
   try {
@@ -28,13 +43,13 @@ export function parseM3U(text: string): Channel[] {
               return {
                   uid: `json-ch-${index}`,
                   name,
-                  url,
+                  url: buildProxyUrl(url, referer, userAgent),
                   logo,
                   group,
                   referer,
                   userAgent
               };
-          }).filter(c => c.url); // filter out items without URLs
+          }).filter(c => c.url && c.url !== '/api/proxy?u='); // filter out empty URLs
       }
   } catch (e) {
       // Not valid JSON, proceed to parse as M3U
@@ -109,7 +124,7 @@ export function parseM3U(text: string): Channel[] {
         userAgent = parts[1].split('&')[0];
       }
       
-      current.url = urlStr;
+      current.url = buildProxyUrl(urlStr, referer, userAgent);
       if (referer) current.referer = referer;
       if (userAgent) current.userAgent = userAgent;
 

@@ -160,156 +160,203 @@ async function startServer() {
 
   // Simple proxy route
   app.all("/api/proxy", (req, res) => {
-    const targetUrl = req.query.url as string;
+    const targetUrl = (req.query.url || req.query.u) as string;
     if (!targetUrl) {
       return res.status(400).send("No target URL provided.");
     }
     handleProxyRequest(targetUrl, req, res);
   });
 
-  function handleProxyRequest(targetUrl: string, req: express.Request, res: express.Response) {
-    // Return CORS headers immediately for OPTIONS requests
+  
+
+
+
+async function handleProxyRequest(targetUrl: string, req: express.Request, res: express.Response) {
     res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Range");
+    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS, HEAD");
+    res.setHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Range, Authorization");
+    res.setHeader("Access-Control-Expose-Headers", "Content-Length, Content-Range, Content-Type, Accept-Ranges");
     
     if (req.method === "OPTIONS") {
+        res.setHeader("Access-Control-Max-Age", "86400");
         return res.status(200).end();
     }
 
-    const customReferer = req.query.referer as string;
-    const customUserAgent = req.query.useragent as string;
-    
-    // Create clean headers
-    const headers: Record<string, string | string[]> = {};
-    for (const [key, value] of Object.entries(req.headers)) {
-        if (value !== undefined) {
-             headers[key] = value;
-        }
-    }
-    
     let urlObj: URL;
     try {
         urlObj = new URL(targetUrl);
     } catch (e) {
         return res.status(400).send("Invalid target URL format.");
     }
-    
-    // Override sensitive headers to look like a browser directly accessing the stream
-    headers["host"] = urlObj.host;
-    headers["origin"] = urlObj.origin;
-    headers["referer"] = customReferer || (urlObj.origin + "/");
-    
-    if (customUserAgent) {
-        headers["user-agent"] = customUserAgent;
-    } else if (!headers["user-agent"]) {
-        headers["user-agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36";
-    }
-    
-    delete headers.cookie; // Don't pass our cookies along
 
-    const requestOptions = {
-        headers,
-        method: req.method,
-        timeout: 60000 // 60 second timeout for large VOD playlists
-    };
-
-    const client = targetUrl.startsWith("https") ? https : http;
-    
-    const proxyReq = client.request(targetUrl, requestOptions, (proxyRes) => {
-        // Set CORS headers
-        res.setHeader("Access-Control-Allow-Origin", "*");
-        res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-        res.setHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Range");
-        
-        if (proxyRes.statusCode) {
-            res.status(proxyRes.statusCode);
-        }
-        
-        // Pass through mostly all headers except CORS related ones
-        for (const [key, value] of Object.entries(proxyRes.headers)) {
-            if (value && !key.toLowerCase().startsWith("access-control-")) {
-                try {
-                  if (key.toLowerCase() === 'location') {
-                      let loc = value as string;
-                      if (!loc.startsWith('http')) {
-                          loc = new URL(loc, targetUrl).href;
-                      }
-                      // Protect location header with new token
-                      const locToken = encryptToken(loc, 60 * 60 * 1000);
-                      res.setHeader(key, `/api/stream/${locToken}`);
-                  } else {
-                      res.setHeader(key, value);
-                  }
-                } catch(e) {}
+    const proxyUrlParams = new URLSearchParams();
+    for (const [k, v] of Object.entries(req.query)) {
+        if (k !== 'url' && k !== 'u' && k !== 'h' && k !== 'referer' && k !== 'useragent' && v !== undefined) {
+            if (Array.isArray(v)) {
+                v.forEach(val => proxyUrlParams.append(k, String(val)));
+            } else {
+                proxyUrlParams.append(k, String(v));
             }
         }
+    }
+
+    const fetchHeaders = new Headers();
+    const allowedHeaders = ['user-agent', 'accept', 'accept-language', 'cookie', 'authorization', 'range'];
+    
+    for (const [key, value] of Object.entries(req.headers)) {
+        const lowerKey = key.toLowerCase();
+        if (value !== undefined && allowedHeaders.includes(lowerKey)) {
+             if (Array.isArray(value)) {
+                 fetchHeaders.set(lowerKey, value[0]);
+             } else {
+                 fetchHeaders.set(lowerKey, value as string);
+             }
+        }
+    }
+
+    const customHeadersBase64 = req.query.h as string;
+    let hasCustomReferer = false;
+    let hasCustomOrigin = false;
+
+    if (customHeadersBase64) {
+        try {
+            const decodedHeaders = JSON.parse(Buffer.from(customHeadersBase64, 'base64').toString('utf-8'));
+            for (const [k, v] of Object.entries(decodedHeaders)) {
+                if (v !== undefined && typeof v === 'string') {
+                    const lowerK = k.toLowerCase();
+                    fetchHeaders.set(lowerK, v);
+                    if (lowerK === 'referer') hasCustomReferer = true;
+                    if (lowerK === 'origin') hasCustomOrigin = true;
+                }
+            }
+        } catch (e) {
+            console.warn("Failed to decode custom headers:", e);
+        }
+    } else {
+        if (req.query.referer) {
+            fetchHeaders.set("referer", req.query.referer as string);
+            hasCustomReferer = true;
+        }
+        if (req.query.useragent) fetchHeaders.set("user-agent", req.query.useragent as string);
+        if (req.query.origin) {
+            fetchHeaders.set("origin", req.query.origin as string);
+            hasCustomOrigin = true;
+        }
+    }
+    
+    if (!fetchHeaders.has("user-agent")) {
+        fetchHeaders.set("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36");
+    }
+
+    if (!hasCustomReferer) {
+        fetchHeaders.set("referer", urlObj.origin + "/");
+    }
+    if (!hasCustomOrigin) {
+        fetchHeaders.set("origin", urlObj.origin);
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
+
+    req.on('close', () => {
+        controller.abort();
+    });
+
+    try {
+        const proxyRes = await fetch(targetUrl, {
+            method: req.method,
+            headers: fetchHeaders,
+            redirect: 'follow',
+            signal: controller.signal
+        });
+
+        clearTimeout(timeoutId);
+
+        const finalUrl = proxyRes.url || targetUrl;
+        const contentType = proxyRes.headers.get('content-type')?.toLowerCase() || '';
+        const isM3u8 = contentType.includes('mpegurl') || contentType.includes('vnd.apple.mpegurl') || finalUrl.includes('.m3u8');
+
+        res.status(proxyRes.status);
+
+        const headersToPreserve = ['content-type', 'cache-control', 'accept-ranges', 'etag', 'last-modified', 'content-length', 'content-range'];
         
-        const contentType = proxyRes.headers['content-type']?.toLowerCase() || '';
-        const isM3u8 = contentType.includes('mpegurl') || targetUrl.includes('.m3u8');
-        
-        if (isM3u8 && proxyRes.statusCode === 200) {
-            let body = '';
-            proxyRes.setEncoding('utf8');
-            proxyRes.on('data', (chunk) => {
-                body += chunk;
-            });
-            proxyRes.on('end', () => {
-                const lines = body.split('\n');
-                const rewritten = lines.map(line => {
-                    const trimmed = line.trim();
-                    if (trimmed && !trimmed.startsWith('#')) {
-                        try {
-                            const absUrl = new URL(trimmed, targetUrl).href;
-                            // 2-hour token for segments
-                            const segToken = encryptToken(absUrl, 2 * 60 * 60 * 1000); 
-                            return `/api/stream/${segToken}`;
-                        } catch(e) {
-                            return line;
-                        }
-                    } else if (trimmed.startsWith('#EXT-X-KEY:')) {
-                        return line.replace(/URI="([^"]+)"/, (match, uri) => {
-                            try {
-                                const absUrl = new URL(uri, targetUrl).href;
-                                const keyToken = encryptToken(absUrl, 2 * 60 * 60 * 1000); 
-                                return `URI="/api/stream/${keyToken}"`;
-                            } catch(e) {
-                                return match;
-                            }
-                        });
+        proxyRes.headers.forEach((value, key) => {
+            const lowerKey = key.toLowerCase();
+            if (headersToPreserve.includes(lowerKey)) {
+                if (isM3u8 && (lowerKey === 'content-length' || lowerKey === 'etag' || lowerKey === 'last-modified' || lowerKey === 'content-range')) {
+                    return; 
+                }
+                res.setHeader(key, value);
+            }
+        });
+
+        const buildRewrittenUrl = (absUrl: string) => {
+            let rewrittenUrl = `/api/proxy?u=${encodeURIComponent(absUrl)}`;
+            if (customHeadersBase64) rewrittenUrl += `&h=${encodeURIComponent(customHeadersBase64)}`;
+            const extraParams = proxyUrlParams.toString();
+            if (extraParams) rewrittenUrl += `&${extraParams}`;
+            return rewrittenUrl;
+        };
+
+        if (isM3u8 && proxyRes.status >= 200 && proxyRes.status < 300) {
+            const text = await proxyRes.text();
+            const lines = text.split('\n');
+            const rewritten = lines.map(line => {
+                const trimmed = line.trim();
+                if (trimmed && !trimmed.startsWith('#')) {
+                    try {
+                        const absUrl = new URL(trimmed, finalUrl).href;
+                        return buildRewrittenUrl(absUrl);
+                    } catch(e) {
+                        return line;
                     }
-                    return line;
-                }).join('\n');
-                res.send(rewritten);
+                } else if (trimmed.startsWith('#EXT')) {
+                    return line.replace(/URI="([^"]+)"/g, (match, uri) => {
+                        try {
+                            const absUrl = new URL(uri, finalUrl).href;
+                            return `URI="${buildRewrittenUrl(absUrl)}"`;
+                        } catch(e) {
+                            return match;
+                        }
+                    });
+                }
+                return line;
+            }).join('\n');
+            res.setHeader('Content-Length', Buffer.byteLength(rewritten).toString());
+            return res.send(rewritten);
+        }
+
+        if (proxyRes.body) {
+            const { Readable } = require('stream');
+            const nodeStream = Readable.fromWeb(proxyRes.body);
+            
+            nodeStream.on('error', (streamErr: any) => {
+                console.error("Stream pipe error:", streamErr);
+                if (!res.headersSent) {
+                    res.status(502).end();
+                } else {
+                    res.end();
+                }
             });
-            return;
+
+            nodeStream.pipe(res);
+            
+            req.on('close', () => {
+                nodeStream.destroy();
+            });
+        } else {
+            res.end();
         }
 
-        proxyRes.pipe(res);
-    });
-    
-    proxyReq.on("error", (err) => {
-        console.error("Proxy error for target:", targetUrl, err);
-        if (!res.headersSent) {
-            res.status(502).send("Proxy Error: " + err.message);
+    } catch (err: any) {
+        clearTimeout(timeoutId);
+        if (err.name === 'AbortError') {
+            if (!res.headersSent) res.status(504).send("Proxy timeout fetching target URL");
+        } else {
+            if (!res.headersSent) res.status(502).send("Proxy Error: " + err.message);
         }
-    });
-
-    proxyReq.on("timeout", () => {
-        proxyReq.destroy();
-        if (!res.headersSent) {
-            res.status(504).send("Proxy timeout fetching target URL");
-        }
-    });
-    
-    req.on("close", () => {
-        if (!res.writableEnded) {
-            proxyReq.destroy();
-        }
-    });
-    
-    proxyReq.end();
-  }
+    }
+}
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {

@@ -144,22 +144,32 @@ export default function App() {
     try {
       const fetchOpts = { cache: 'no-store' as RequestCache };
       let resp;
+      const targetUrl = pl.url === '/api/playlists' 
+            ? 'https://raw.githubusercontent.com/shakil951/PlaylistCheck/refs/heads/main/combined_playlist.m3u'
+            : pl.url;
+      
+      let text = '';
       try {
-        let fetchUrl = pl.url;
-        if (pl.url === '/api/playlists') {
-            fetchUrl = '/api/channels';
-        } else {
-            fetchUrl = `/api/channels?url=${encodeURIComponent(pl.url)}`;
-        }
+        let fetchUrl = pl.url === '/api/playlists' ? '/api/channels' : `/api/channels?url=${encodeURIComponent(pl.url)}`;
         resp = await fetch(fetchUrl, fetchOpts);
-        if (!resp.ok) {
-             throw new Error('Not ok');
+        if (!resp.ok) throw new Error('Not ok');
+        text = await resp.text();
+        // If the backend returns HTML (e.g. SPA fallback on static hosting), treat it as failed
+        if (text.trim().startsWith('<') && text.includes('<!DOCTYPE html>')) {
+            throw new Error('Backend returned HTML');
         }
       } catch (e) {
-        resp = await fetch(`/api/proxy?url=${encodeURIComponent(pl.url)}`, fetchOpts);
-        if (!resp.ok) throw new Error('Network error');
+        // Fallback if backend is unavailable (e.g. static hosting)
+        try {
+            resp = await fetch(targetUrl, fetchOpts);
+            if (!resp.ok) throw new Error('Direct fetch failed');
+            text = await resp.text();
+        } catch (e2) {
+            resp = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`, fetchOpts);
+            if (!resp.ok) throw new Error('Proxy fetch failed');
+            text = await resp.text();
+        }
       }
-      const text = await resp.text();
       const chs = parseM3U(text);
       console.log("Parsed channels:", chs.length, "from text length:", text.length);
       if (chs.length === 0) throw new Error('No channels found');
@@ -886,10 +896,10 @@ export default function App() {
                         {filteredChannels.slice(0, 200).map(ch => {
                           const isActive = activeChannel?.uid === ch.uid;
                           return (
-                            <button 
+                            <div 
                               key={ch.uid}
                               onClick={() => handlePlay(ch)}
-                              className={`w-full flex items-center gap-3 p-2.5 rounded-xl transition-all border relative overflow-hidden group ${isActive ? 'bg-white/10 border-primary/20 shadow-sm' : 'border-transparent hover:bg-white/5'}`}
+                              className={`w-full flex items-center gap-3 p-2.5 rounded-xl transition-all border relative overflow-hidden group cursor-pointer ${isActive ? 'bg-white/10 border-primary/20 shadow-sm' : 'border-transparent hover:bg-white/5'}`}
                             >
                               {isActive && <div className="absolute inset-y-0 left-0 w-1 bg-primary" />}
                               <ChannelLogo channel={ch} className="w-10 h-10 shrink-0" customLogo={customLogos[ch.name] === 'none' ? undefined : customLogos[ch.name]} isAdmin={isAdmin} onUpdateLogo={handleUpdateLogo} />
@@ -897,7 +907,7 @@ export default function App() {
                                 <div className={`truncate text-[13px] font-semibold transition-colors ${isActive ? 'text-primary' : 'text-slate-200 group-hover:text-white'}`}>{ch.name}</div>
                                 <div className="truncate text-[10px] uppercase tracking-widest text-slate-500 mt-0.5 font-medium">{ch.group}</div>
                               </div>
-                            </button>
+                            </div>
                           );
                         })}
                       </motion.div>
@@ -1349,14 +1359,14 @@ export default function App() {
                               {filteredChannels.slice(0, 200).map(ch => {
                                 const isActive = activeChannel?.uid === ch.uid;
                                 return (
-                                  <button key={ch.uid} onClick={() => handlePlay(ch)} className={`w-full flex items-center gap-3 p-2.5 rounded-xl transition-all border relative overflow-hidden group ${isActive ? 'bg-white/10 border-primary/20 shadow-sm' : 'border-transparent hover:bg-white/5'}`}>
+                                  <div key={ch.uid} onClick={() => handlePlay(ch)} className={`w-full flex items-center gap-3 p-2.5 rounded-xl transition-all border relative overflow-hidden group cursor-pointer ${isActive ? 'bg-white/10 border-primary/20 shadow-sm' : 'border-transparent hover:bg-white/5'}`}>
                                     {isActive && <div className="absolute inset-y-0 left-0 w-1 bg-primary shadow-sm" />}
                                     <ChannelLogo channel={ch} className="w-10 h-10 shrink-0" customLogo={customLogos[ch.name] === 'none' ? undefined : customLogos[ch.name]} isAdmin={isAdmin} onUpdateLogo={handleUpdateLogo} />
                                     <div className="flex-1 min-w-0 text-left">
                                       <div className={`truncate text-sm font-semibold transition-colors ${isActive ? 'text-primary' : 'text-slate-200 group-hover:text-white'}`}>{ch.name}</div>
                                       <div className="truncate text-[10px] uppercase tracking-widest text-slate-500 mt-0.5 font-medium leading-tight">{ch.group}</div>
                                     </div>
-                                  </button>
+                                  </div>
                                 );
                               })}
                             </motion.div>

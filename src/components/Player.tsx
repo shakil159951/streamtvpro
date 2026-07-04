@@ -118,10 +118,16 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
           videoRef.current.play().catch(()=>{});
       }
       if (clapprRef.current && clapprRef.current.play) {
-          clapprRef.current.play();
+          try {
+              const p = clapprRef.current.play();
+              if (p && p.catch) p.catch(() => {});
+          } catch(e) {}
       }
       if (videojsRef.current && videojsRef.current.play) {
-          videojsRef.current.play();
+          try {
+              const p = videojsRef.current.play();
+              if (p && p.catch) p.catch(() => {});
+          } catch(e) {}
       }
     }
   }, [isDevToolsOpen, isPlaying]);
@@ -419,6 +425,11 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
             lowLatencyMode: true, 
             backBufferLength: 90,
             liveSyncDurationCount: 3,
+            xhrSetup: (xhr, url) => {
+                if (url.startsWith('/api/') || url.includes(window.location.host)) {
+                    xhr.withCredentials = true; // Send cookies for AI Studio proxy check
+                }
+            },
             liveMaxLatencyDurationCount: 10,
             manifestLoadingMaxRetry: 2,
             manifestLoadingRetryDelay: 1000,
@@ -479,6 +490,11 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
             }
             const player = new shaka.Player(videoRef.current);
             shakaRef.current = player;
+            player.getNetworkingEngine().registerRequestFilter((type: any, request: any) => {
+                if (request.uris[0].startsWith('/api/') || request.uris[0].includes(window.location.host)) {
+                    request.allowCrossSiteCredentials = true;
+                }
+            });
             player.addEventListener('error', () => { 
                 if (proxyIdx < maxProxyIndex) initShaka(proxyIdx + 1);
                 else handleEngineFailure('Shaka Player Error'); 
@@ -527,7 +543,17 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
                 autoplay: true,
                 fluid: false,
                 errorDisplay: false,
-                sources: [srcObj]
+                sources: [srcObj],
+                html5: {
+                    vhs: {
+                        beforeRequest: (options: any) => {
+                            if (options.uri.startsWith('/api/') || options.uri.includes(window.location.host)) {
+                                options.withCredentials = true;
+                            }
+                            return options;
+                        }
+                    }
+                }
             });
             videojsRef.current = player;
             player.on('error', () => { 
@@ -546,14 +572,34 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
     const initClappr = async (proxyIdx: number) => {
         if (!clapprContainerRef.current) return;
         try {
+            if (clapprRef.current) {
+                clapprRef.current.destroy();
+                clapprRef.current = null;
+            }
             const Clappr = (await import('@clappr/player')).default;
+            const srcUrl = getProxiedUrl(channel.url, proxyIdx);
+            let mimeType;
+            if (channel.url.toLowerCase().includes('.m3u8')) mimeType = 'application/x-mpegURL';
+            else if (channel.url.toLowerCase().includes('.mpd')) mimeType = 'application/dash+xml';
+            else if (channel.url.toLowerCase().includes('.mp4')) mimeType = 'video/mp4';
+
             const player = new Clappr.Player({
-                source: getProxiedUrl(channel.url, proxyIdx),
+                source: srcUrl,
+                mimeType: mimeType,
                 autoPlay: true,
                 width: '100%',
                 height: '100%',
                 chromeless: false,
-                parentId: clapprContainerRef.current
+                parentId: clapprContainerRef.current,
+                playback: {
+                    hlsjsConfig: {
+                        xhrSetup: (xhr: any, url: string) => {
+                            if (url.startsWith('/api/') || url.includes(window.location.host)) {
+                                xhr.withCredentials = true;
+                            }
+                        }
+                    }
+                }
             });
             player.on(Clappr.Events.PLAYER_ERROR, () => { 
                 if (proxyIdx < maxProxyIndex) initClappr(proxyIdx + 1);
@@ -577,10 +623,18 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
         initDash(0);
     } else if ((isTsExt || ext === 'flv') && mpegts.getFeatureList().mseLivePlayback) {
         initMpegts(0);
-    } else if (!isDirectExt && Hls.isSupported()) {
-        initHls(0);
     } else {
-        tryNativeFirst(0);
+        const video = document.createElement('video');
+        const canPlayNativeHls = video.canPlayType('application/vnd.apple.mpegurl') || video.canPlayType('application/x-mpegurl');
+        
+        if (canPlayNativeHls && (isM3u8Ext || !isDirectExt)) {
+            // Prefer native playback on devices that support it (Safari, iOS, Android Chrome) to bypass CORS issues
+            tryNativeFirst(0);
+        } else if (!isDirectExt && Hls.isSupported()) {
+            initHls(0);
+        } else {
+            tryNativeFirst(0);
+        }
     }
     
     return () => {
@@ -693,7 +747,7 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
           if (document.pictureInPictureElement) await document.exitPictureInPicture();
           else await videoRef.current.requestPictureInPicture();
       } catch (e) {
-          console.error(e);
+          console.warn(e);
       }
   };
 

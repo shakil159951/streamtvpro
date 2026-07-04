@@ -8,3 +8,13 @@ createRoot(document.getElementById('root')!).render(
     <App />
   </StrictMode>,
 );
+
+// Suppress known benign browser errors
+window.addEventListener('unhandledrejection', (event) => {
+    if (event.reason && event.reason.name === 'AbortError') {
+        event.preventDefault();
+    }
+    if (event.reason && event.reason.message && event.reason.message.includes('The play() request was interrupted')) {
+        event.preventDefault();
+    }
+});
