@@ -155,7 +155,7 @@ export default function App() {
         if (!resp.ok) throw new Error('Not ok');
         text = await resp.text();
         // If the backend returns HTML (e.g. SPA fallback on static hosting), treat it as failed
-        if (text.trim().startsWith('<') && text.includes('<!DOCTYPE html>')) {
+        if (text.trim().startsWith('<') && (text.includes('<!DOCTYPE html>') || text.toLowerCase().includes('<html'))) {
             throw new Error('Backend returned HTML');
         }
       } catch (e) {
@@ -889,6 +889,8 @@ export default function App() {
                          </div>
                          <span className="text-[10px] tracking-widest uppercase font-semibold text-primary animate-pulse">Loading</span>
                        </motion.div>
+                    ) : error ? (
+                       <motion.div key="err" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="p-4 text-center text-sm text-red-500">{error}</motion.div>
                     ) : filteredChannels.length === 0 ? (
                        <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="p-4 text-center text-sm text-slate-500">No channels found</motion.div>
                     ) : (
