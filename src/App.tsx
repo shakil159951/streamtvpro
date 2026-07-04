@@ -5,11 +5,13 @@ import { getPlaylists, savePlaylists } from './lib/storage';
 import { parseM3U } from './lib/m3u';
 import { XtreamApi, XtreamVod, XtreamSeries } from './lib/xtream';
 import { subscribeToConfig, updateConfig } from './lib/firebase';
-import { 
+import { AlertCircle, 
   Tv, Code, ListVideo, Search, Plus, PlayCircle, RefreshCw, 
-  Trash2, X, MonitorPlay, ExternalLink, Activity, Film, Clapperboard, FolderOpen, Settings, Edit, ChevronDown, Rocket, ShieldCheck, Lightbulb, Quote, Code2
+  Trash2, X, MonitorPlay, ExternalLink, Activity, Film, Clapperboard, FolderOpen, Settings, Edit, ChevronDown, Rocket, ShieldCheck, Lightbulb, Quote, Code2, Info
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { useAntiDebug } from './hooks/useAntiDebug';
+import { ChannelLogo } from './components/ChannelLogo';
 
 const APP_NOTICE = "Welcome to STREAM TV PRO. Enjoy the best premium broadcast experience. High-definition sports channels and premium content updated daily. ⚡";
 
@@ -19,9 +21,12 @@ export default function App() {
   const [adminLoginInput, setAdminLoginInput] = useState('');
 
   const [playlists, setPlaylists] = useState<Playlist[]>(() => getPlaylists());
+  const [customLogos, setCustomLogos] = useState<Record<string, string>>(() => { try { return JSON.parse(localStorage.getItem('custom_logos') || '{}'); } catch { return {}; } });
+  const handleUpdateLogo = (channelName: string, logoUrl: string | null) => { const updated = { ...customLogos }; if (logoUrl) { updated[channelName] = logoUrl; } else { delete updated[channelName]; } setCustomLogos(updated); localStorage.setItem('custom_logos', JSON.stringify(updated)); if (isAdmin) { updateConfig({ customLogos: updated }); } };
   const [channels, setChannels] = useState<Channel[]>([]);
   const [m3uVodChannels, setM3uVodChannels] = useState<Channel[]>([]);
   const [activeChannel, setActiveChannel] = useState<Channel | null>(null);
+  const isDevToolsOpen = useAntiDebug();
   const [search, setSearch] = useState('');
   const [groupFilter, setGroupFilter] = useState('');
   const [activeTab, setActiveTab] = useState<'channels' | 'vod' | 'lists' | 'dev' | 'setup'>('channels');
@@ -35,6 +40,7 @@ export default function App() {
   const [leftDrawerOpen, setLeftDrawerOpen] = useState(false);
   const [showNotice, setShowNotice] = useState(true);
   const [appNotice, setAppNotice] = useState(() => localStorage.getItem('app_notice') || APP_NOTICE);
+  const [devConfig, setDevConfig] = useState<any>(() => { try { return JSON.parse(localStorage.getItem('dev_config') || '{}'); } catch { return {}; } });
   
   // Backend Sync
   const [backendSyncing, setBackendSyncing] = useState(false);
@@ -139,17 +145,27 @@ export default function App() {
       const fetchOpts = { cache: 'no-store' as RequestCache };
       let resp;
       try {
-        resp = await fetch(pl.url, fetchOpts);
-        if (!resp.ok) throw new Error('Not ok');
+        let fetchUrl = pl.url;
+        if (pl.url === '/api/playlists') {
+            fetchUrl = '/api/channels';
+        } else {
+            fetchUrl = `/api/channels?url=${encodeURIComponent(pl.url)}`;
+        }
+        resp = await fetch(fetchUrl, fetchOpts);
+        if (!resp.ok) {
+             throw new Error('Not ok');
+        }
       } catch (e) {
         resp = await fetch(`/api/proxy?url=${encodeURIComponent(pl.url)}`, fetchOpts);
         if (!resp.ok) throw new Error('Network error');
       }
       const text = await resp.text();
       const chs = parseM3U(text);
+      console.log("Parsed channels:", chs.length, "from text length:", text.length);
       if (chs.length === 0) throw new Error('No channels found');
       setChs(chs);
     } catch (err: any) {
+      console.error("Playlist load error:", err);
       setErr(err.message || 'Failed to load playlist');
     } finally {
       setLdg(false);
@@ -224,6 +240,15 @@ export default function App() {
       localStorage.setItem('app_notice', data.app_notice);
     }
     
+    if (data.devConfig) {
+      setDevConfig(data.devConfig);
+      localStorage.setItem('dev_config', JSON.stringify(data.devConfig));
+    }
+    
+    if (data.customLogos) {
+      setCustomLogos(data.customLogos);
+      localStorage.setItem('custom_logos', JSON.stringify(data.customLogos));
+    }
     if (data.xtream) {
       setXtreamUrl(data.xtream.url || '');
       setXtreamUser(data.xtream.username || '');
@@ -274,6 +299,7 @@ export default function App() {
     try {
       const data = JSON.parse(JSON.stringify({
         app_notice: appNotice || '',
+        devConfig: devConfig || {},
         xtream: {
           url: xtreamUrl || '',
           username: xtreamUser || '',
@@ -283,7 +309,8 @@ export default function App() {
           name: p.name || '',
           url: p.url || '',
           type: p.type || 'live'
-        }))
+        })),
+        customLogos: customLogos
       }));
       await updateConfig(data);
       localStorage.setItem('custom_json_config', JSON.stringify(data, null, 2));
@@ -460,8 +487,11 @@ export default function App() {
           <AnimatePresence mode="wait">
             {loadingVod ? (
               <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex-1 flex flex-col items-center justify-center text-slate-400 p-8 h-full">
-                <div className="animate-spin w-8 h-8 border-2 border-primary border-t-transparent rounded-full mb-4" />
-                <p className="text-sm">Loading M3U VOD Library...</p>
+                <div className="relative flex items-center justify-center mb-4">
+                  <div className="absolute inset-0 border-2 border-white/5 rounded-full w-10 h-10 blur-[1px]"></div>
+                  <div className="animate-spin w-10 h-10 border-2 border-primary border-t-transparent border-l-transparent rounded-full shadow-[0_0_15px_rgba(20,184,166,0.3)]" />
+                </div>
+                <p className="text-[10px] tracking-widest uppercase font-semibold text-primary animate-pulse">Loading M3U VOD</p>
               </motion.div>
             ) : (
               <motion.div key="grid" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex-1 overflow-y-auto p-4 grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-4 auto-rows-max h-full">
@@ -589,17 +619,26 @@ export default function App() {
         <AnimatePresence mode="wait">
           {isLoadingVod && ((vodType === 'movies' && movies.length === 0) || (vodType === 'series' && seriesList.length === 0)) ? (
             <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex-1 flex flex-col items-center justify-center text-slate-400 p-8 h-full">
-              <div className="animate-spin w-8 h-8 border-2 border-primary border-t-transparent rounded-full mb-4" />
-              <p className="text-sm">Loading {vodType === 'movies' ? 'Movie Library' : 'TV Series'}...</p>
+              <div className="relative flex items-center justify-center mb-4">
+                  <div className="absolute inset-0 border-2 border-white/5 rounded-full w-10 h-10 blur-[1px]"></div>
+                  <div className="animate-spin w-10 h-10 border-2 border-primary border-t-transparent border-l-transparent rounded-full shadow-[0_0_15px_rgba(20,184,166,0.3)]" />
+              </div>
+              <p className="text-[10px] tracking-widest uppercase font-semibold text-primary animate-pulse">Loading {vodType === 'movies' ? 'Movie Library' : 'TV Series'}</p>
             </motion.div>
           ) : xtreamError ? (
-             <motion.div key="error" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="p-6 mt-4 flex flex-col items-center">
-               <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-4 rounded-xl text-sm break-words mb-4">{xtreamError}</div>
-               {isRouteAdmin && isAdmin && (
-                 <button onClick={clearXtreamConfig} className="px-4 py-2 font-bold text-red-400 border border-red-500/30 rounded-lg hover:bg-red-500/10 transition-colors">
-                   Clear Xtream Config
-                 </button>
-               )}
+             <motion.div key="error" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="p-6 mt-4 flex flex-col items-center max-w-lg mx-auto">
+               <div className="w-full bg-red-500/5 border border-red-500/10 backdrop-blur-md rounded-2xl p-6 shadow-2xl relative overflow-hidden text-center">
+                 <div className="w-12 h-12 bg-red-500/10 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-500/20">
+                    <X className="w-6 h-6 text-red-400" />
+                 </div>
+                 <h3 className="text-red-400 font-bold tracking-wide mb-2">Connection Failed</h3>
+                 <div className="text-slate-400 text-sm break-words mb-6 leading-relaxed">{xtreamError}</div>
+                 {isRouteAdmin && isAdmin && (
+                   <button onClick={clearXtreamConfig} className="w-full sm:w-auto px-6 py-2.5 font-semibold text-white bg-red-500/10 border border-red-500/20 rounded-xl hover:bg-red-500/20 transition-all hover:scale-[1.02] active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-black text-sm">
+                     Clear Settings
+                   </button>
+                 )}
+               </div>
              </motion.div>
           ) : (
             <motion.div key="grid" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex-1 overflow-y-auto p-4 grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-4 auto-rows-max h-full">
@@ -681,6 +720,13 @@ export default function App() {
     );
   }
 
+  const devPhoto = devConfig?.photo || "https://api.dicebear.com/7.x/lorelei/svg?seed=Farabi&backgroundColor=0d9488";
+  const devName = devConfig?.name || "FARABI AHMED\nSHAKIL";
+  const devFbUrl = devConfig?.facebookUrl || "https://www.facebook.com/farabiahmedshakil11";
+  const devFbHandle = devConfig?.facebookHandle || "farabiahmedshakil11";
+  const devTgUrl = devConfig?.telegramUrl || "https://t.me/farabiSH";
+  const devTgHandle = devConfig?.telegramHandle || "@farabiSH";
+
   return (
     <div className="flex flex-col h-[100dvh] w-full bg-transparent text-slate-200 overflow-hidden font-sans relative">
       <div className="cinematic-bg"></div>
@@ -688,7 +734,7 @@ export default function App() {
       {/* Header */}
       <header className="flex-shrink-0 h-16 glass-panel flex items-center justify-between px-4 z-40 border-b-0 border-white/5 relative">
         <div className="flex items-center gap-3">
-          <button onClick={() => setLeftDrawerOpen(true)} className="hidden md:flex lg:hidden p-2 -ml-2 text-slate-400 hover:text-white rounded-full transition-colors glass-button">
+          <button aria-label="Open Menu" onClick={() => setLeftDrawerOpen(true)} className="hidden md:flex lg:hidden p-2 -ml-2 text-slate-400 hover:text-white rounded-full transition-colors glass-button">
             <ListVideo className="w-5 h-5" />
           </button>
           <div className="hidden sm:flex w-9 h-9 bg-primary-light rounded-xl items-center justify-center border border-primary/20 shrink-0 shadow-[0_0_15px_rgba(0,229,195,0.2)]">
@@ -719,11 +765,11 @@ export default function App() {
             </div>
           )}
           {isRouteAdmin && isAdmin && (
-            <button onClick={() => setShowAddModal(true)} className="p-2 glass-button text-slate-300 hover:text-white rounded-xl transition-all" title="Add Playlist">
+            <button aria-label="Add Playlist" onClick={() => setShowAddModal(true)} className="p-2 glass-button text-slate-300 hover:text-white rounded-xl transition-all" title="Add Playlist">
               <Plus className="w-4 h-4" />
             </button>
           )}
-          <button onClick={() => setShowDirectModal(true)} className="p-2 glass-button text-slate-300 hover:text-white rounded-xl transition-all" title="Direct Play">
+          <button aria-label="Direct Play" onClick={() => setShowDirectModal(true)} className="p-2 glass-button text-slate-300 hover:text-white rounded-xl transition-all" title="Direct Play">
             <FolderOpen className="w-4 h-4" />
           </button>
           <button onClick={() => {
@@ -739,15 +785,18 @@ export default function App() {
       </header>
 
       {showNotice && (
-        <div className="flex items-center justify-between bg-primary/10 border-b border-primary/20 px-4 py-2 relative overflow-hidden shrink-0">
-          <div className="absolute inset-0 bg-gradient-to-r from-primary/5 to-amber-500/5 backdrop-blur-md" />
-          <div className="flex-1 overflow-hidden whitespace-nowrap z-10 flex text-xs sm:text-sm">
-            <div className="animate-marquee inline-block text-teal-50/90 font-medium tracking-wide">
-              <span className="text-amber-500 font-bold mr-3 uppercase tracking-widest text-[10px] sm:text-xs bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">NOTICE</span>
-              {appNotice}
+        <div className="flex items-center justify-between bg-black/60 border-b border-white/5 px-4 py-2.5 relative overflow-hidden shrink-0 backdrop-blur-xl shadow-sm z-40">
+          <div className="absolute inset-0 bg-gradient-to-r from-primary/10 via-transparent to-primary/5" />
+          <div className="flex-1 overflow-hidden whitespace-nowrap z-10 flex items-center text-xs sm:text-sm">
+            <div className="animate-marquee inline-block text-slate-300 font-medium tracking-wide">
+              <span className="text-primary font-bold mr-3 uppercase tracking-widest text-[10px] sm:text-xs bg-primary/10 px-2.5 py-1 rounded-md border border-primary/20 shadow-inner inline-flex items-center gap-1.5 align-middle">
+                <Info className="w-3.5 h-3.5" />
+                Update
+              </span>
+              <span className="align-middle">{appNotice}</span>
             </div>
           </div>
-          <button onClick={() => setShowNotice(false)} className="ml-4 p-1.5 hover:bg-white/10 rounded-full z-10 text-slate-400 hover:text-white transition-colors glass-card/50 backdrop-blur-md">
+          <button aria-label="Close Notice" onClick={() => setShowNotice(false)} className="ml-4 p-1.5 hover:bg-white/10 rounded-full z-10 text-slate-400 hover:text-white transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -823,9 +872,12 @@ export default function App() {
                 <div className="flex-1 overflow-y-auto px-2 pb-4 space-y-1">
                   <AnimatePresence mode="wait">
                     {loading ? (
-                       <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="p-4 text-center text-sm text-slate-500 flex flex-col items-center gap-3">
-                         <div className="animate-spin w-5 h-5 border-2 border-primary border-t-transparent rounded-full" />
-                         Loading channels...
+                       <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="p-8 text-center text-sm text-slate-500 flex flex-col items-center justify-center gap-4">
+                         <div className="relative flex items-center justify-center">
+                           <div className="absolute inset-0 border-[2px] border-white/5 rounded-full w-8 h-8 blur-[1px]"></div>
+                           <div className="animate-spin w-8 h-8 border-[2px] border-primary border-t-transparent border-l-transparent rounded-full shadow-[0_0_10px_rgba(20,184,166,0.3)]" />
+                         </div>
+                         <span className="text-[10px] tracking-widest uppercase font-semibold text-primary animate-pulse">Loading</span>
                        </motion.div>
                     ) : filteredChannels.length === 0 ? (
                        <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="p-4 text-center text-sm text-slate-500">No channels found</motion.div>
@@ -840,9 +892,7 @@ export default function App() {
                               className={`w-full flex items-center gap-3 p-2.5 rounded-xl transition-all border relative overflow-hidden group ${isActive ? 'bg-white/10 border-primary/20 shadow-sm' : 'border-transparent hover:bg-white/5'}`}
                             >
                               {isActive && <div className="absolute inset-y-0 left-0 w-1 bg-primary" />}
-                              <div className={`w-10 h-10 rounded-lg bg-transparent flex items-center justify-center text-xs font-bold shrink-0 overflow-hidden border transition-colors ${isActive ? 'border-primary/50 text-primary' : 'border-white/10 text-slate-400 group-hover:border-white/20'}`}>
-                                {ch.logo ? <img src={ch.logo} alt="" className="w-full h-full object-cover" /> : ch.name.substring(0, 2).toUpperCase()}
-                              </div>
+                              <ChannelLogo channel={ch} className="w-10 h-10 shrink-0" customLogo={customLogos[ch.name] === 'none' ? undefined : customLogos[ch.name]} isAdmin={isAdmin} onUpdateLogo={handleUpdateLogo} />
                               <div className="flex-1 min-w-0 text-left">
                                 <div className={`truncate text-[13px] font-semibold transition-colors ${isActive ? 'text-primary' : 'text-slate-200 group-hover:text-white'}`}>{ch.name}</div>
                                 <div className="truncate text-[10px] uppercase tracking-widest text-slate-500 mt-0.5 font-medium">{ch.group}</div>
@@ -935,10 +985,10 @@ export default function App() {
                   {/* Profile row */}
                   <div className="flex items-center gap-4 sm:gap-5 relative z-10">
                     <div className="w-20 h-20 rounded-2xl flex items-center justify-center text-xl font-black shadow-[0_0_20px_rgba(20,184,166,0.4)] overflow-hidden border-2 border-primary bg-teal-900/50 shrink-0">
-                      <img src="https://api.dicebear.com/7.x/lorelei/svg?seed=Farabi&backgroundColor=0d9488" alt="Developer" className="w-full h-full object-cover" />
+                      <img src={devPhoto} alt="Developer" className="w-full h-full object-cover" />
                     </div>
                     <div>
-                      <h2 className="font-black text-lg sm:text-xl tracking-wide text-slate-50 uppercase drop-shadow-[0_2px_10px_rgba(20,184,166,0.5)]">FARABI AHMED<br/>SHAKIL</h2>
+                      <h2 className="font-black text-lg sm:text-xl tracking-wide text-slate-50 uppercase drop-shadow-[0_2px_10px_rgba(20,184,166,0.5)] whitespace-pre-line">{devName.replace(/\\n/g, '\n')}</h2>
                       <div className="text-[10px] sm:text-xs text-primary font-bold tracking-widest uppercase mt-1.5 flex items-center gap-2">
                         <span className="w-2 h-2 rounded-full bg-primary shadow-[0_0_8px_rgba(45,212,191,1)]" /> DEVELOPER
                       </div>
@@ -983,20 +1033,20 @@ export default function App() {
                     <h3 className="text-xs sm:text-sm font-bold text-primary uppercase tracking-[0.2em] drop-shadow-[0_0_8px_rgba(45,212,191,0.5)]">CONTACT</h3>
                   </div>
                   
-                  <a href="https://www.facebook.com/farabiahmedshakil11" target="_blank" rel="noopener noreferrer" className="flex items-center gap-4 p-3 sm:p-4 bg-black/60 glass-card border border-white/10 hover:border-primary/50 hover:bg-white/10/80 rounded-2xl transition-all group shadow-lg">
+                  <a href={devFbUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-4 p-3 sm:p-4 bg-black/60 glass-card border border-white/10 hover:border-primary/50 hover:bg-white/10/80 rounded-2xl transition-all group shadow-lg">
                     <div className="w-10 h-10 sm:w-12 sm:h-12 bg-[#1877F2] rounded-xl flex items-center justify-center shrink-0 shadow-[0_4px_15px_rgba(24,119,242,0.4)] group-hover:scale-105 transition-transform"><span className="font-bold text-xl sm:text-2xl text-white">f</span></div>
                     <div className="flex-1">
                       <div className="font-bold text-sm sm:text-base group-hover:text-teal-300 transition-colors text-slate-100">Facebook</div>
-                      <div className="text-[10px] sm:text-xs text-slate-400">farabiahmedshakil11</div>
+                      <div className="text-[10px] sm:text-xs text-slate-400">{devFbHandle}</div>
                     </div>
                     <ExternalLink className="w-4 h-4 sm:w-5 sm:h-5 text-slate-500 group-hover:text-primary" />
                   </a>
                   
-                  <a href="https://t.me/farabiSH" target="_blank" rel="noopener noreferrer" className="flex items-center gap-4 p-3 sm:p-4 bg-black/60 glass-card border border-white/10 hover:border-primary/50 hover:bg-white/10/80 rounded-2xl transition-all group shadow-lg">
+                  <a href={devTgUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-4 p-3 sm:p-4 bg-black/60 glass-card border border-white/10 hover:border-primary/50 hover:bg-white/10/80 rounded-2xl transition-all group shadow-lg">
                     <div className="w-10 h-10 sm:w-12 sm:h-12 bg-[#229ED9] rounded-xl flex items-center justify-center shrink-0 shadow-[0_4px_15px_rgba(34,158,217,0.4)] group-hover:scale-105 transition-transform"><span className="font-bold italic text-lg sm:text-xl text-white">TG</span></div>
                     <div className="flex-1">
                       <div className="font-bold text-sm sm:text-base group-hover:text-teal-300 transition-colors text-slate-100">Telegram</div>
-                      <div className="text-[10px] sm:text-xs text-slate-400">@farabiSH</div>
+                      <div className="text-[10px] sm:text-xs text-slate-400">{devTgHandle}</div>
                     </div>
                     <ExternalLink className="w-4 h-4 sm:w-5 sm:h-5 text-slate-500 group-hover:text-primary" />
                   </a>
@@ -1018,15 +1068,47 @@ export default function App() {
                 
                 <div className="space-y-4">
                   {backendError && (
-                    <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 text-xs rounded-xl">
-                      {backendError}
+                    <div className="p-4 bg-gradient-to-r from-red-500/10 to-transparent border-l-4 border-red-500 text-red-400 text-sm font-medium rounded-r-xl shadow-sm flex items-center gap-3">
+                      <AlertCircle className="w-5 h-5 shrink-0" />
+                      <span>{backendError}</span>
                     </div>
                   )}
                   {backendSuccess && (
-                    <div className="p-3 bg-primary/10 border border-primary/20 text-primary text-xs rounded-xl">
-                      {backendSuccess}
+                    <div className="p-4 bg-gradient-to-r from-primary/10 to-transparent border-l-4 border-primary text-primary text-sm font-medium rounded-r-xl shadow-sm flex items-center gap-3">
+                      <ShieldCheck className="w-5 h-5 shrink-0" />
+                      <span>{backendSuccess}</span>
                     </div>
                   )}
+
+                  <div className="border-t border-white/5 my-4 pt-4 space-y-4">
+                    <h3 className="text-xs font-bold text-primary uppercase tracking-widest">Developer Profile</h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-[10px] text-slate-400 mb-1">Image URL</label>
+                        <input type="text" value={devConfig?.photo || ''} onChange={e => setDevConfig({...devConfig, photo: e.target.value})} placeholder="https://api.dicebear.com/..." className="w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-xs focus:outline-none focus:border-primary/50 text-slate-200" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-slate-400 mb-1">Developer Name</label>
+                        <input type="text" value={devConfig?.name || ''} onChange={e => setDevConfig({...devConfig, name: e.target.value})} placeholder="FARABI AHMED\nSHAKIL" className="w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-xs focus:outline-none focus:border-primary/50 text-slate-200" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-slate-400 mb-1">Facebook Handle</label>
+                        <input type="text" value={devConfig?.facebookHandle || ''} onChange={e => setDevConfig({...devConfig, facebookHandle: e.target.value})} placeholder="farabiahmedshakil11" className="w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-xs focus:outline-none focus:border-primary/50 text-slate-200" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-slate-400 mb-1">Facebook URL</label>
+                        <input type="text" value={devConfig?.facebookUrl || ''} onChange={e => setDevConfig({...devConfig, facebookUrl: e.target.value})} placeholder="https://www.facebook.com/..." className="w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-xs focus:outline-none focus:border-primary/50 text-slate-200" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-slate-400 mb-1">Telegram Handle</label>
+                        <input type="text" value={devConfig?.telegramHandle || ''} onChange={e => setDevConfig({...devConfig, telegramHandle: e.target.value})} placeholder="@farabiSH" className="w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-xs focus:outline-none focus:border-primary/50 text-slate-200" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-slate-400 mb-1">Telegram URL</label>
+                        <input type="text" value={devConfig?.telegramUrl || ''} onChange={e => setDevConfig({...devConfig, telegramUrl: e.target.value})} placeholder="https://t.me/..." className="w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-xs focus:outline-none focus:border-primary/50 text-slate-200" />
+                      </div>
+                    </div>
+                  </div>
 
                   <div className="flex gap-3 pt-2">
                      <button 
@@ -1181,7 +1263,7 @@ export default function App() {
         <div className="flex-1 flex flex-col min-w-0 bg-transparent overflow-hidden relative z-10">
           <div className="w-full shrink-0 aspect-video md:aspect-auto md:flex-1 relative shadow-[0_10px_30px_rgba(0,0,0,0.8)] z-20">
             <div className="absolute inset-0">
-              <Player channel={activeChannel} />
+              <Player channel={activeChannel} isDevToolsOpen={isDevToolsOpen} />
             </div>
           </div>
           
@@ -1253,7 +1335,13 @@ export default function App() {
                       <div className="flex-1 overflow-y-auto px-2 pb-6 space-y-1">
                         <AnimatePresence mode="wait">
                           {loading ? (
-                             <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="p-8 text-center text-sm text-slate-500 flex flex-col items-center gap-2"><div className="animate-spin w-5 h-5 border-2 border-primary border-t-transparent rounded-full" />Loading...</motion.div>
+                             <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="p-8 text-center text-sm text-slate-500 flex flex-col items-center justify-center gap-4">
+                                <div className="relative flex items-center justify-center">
+                                  <div className="absolute inset-0 border-[2px] border-white/5 rounded-full w-8 h-8 blur-[1px]"></div>
+                                  <div className="animate-spin w-8 h-8 border-[2px] border-primary border-t-transparent border-l-transparent rounded-full shadow-[0_0_10px_rgba(20,184,166,0.3)]" />
+                                </div>
+                                <span className="text-[10px] tracking-widest uppercase font-semibold text-primary animate-pulse">Loading</span>
+                             </motion.div>
                           ) : filteredChannels.length === 0 ? (
                              <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="p-8 text-center text-sm text-slate-500">No channels found</motion.div>
                           ) : (
@@ -1263,9 +1351,7 @@ export default function App() {
                                 return (
                                   <button key={ch.uid} onClick={() => handlePlay(ch)} className={`w-full flex items-center gap-3 p-2.5 rounded-xl transition-all border relative overflow-hidden group ${isActive ? 'bg-white/10 border-primary/20 shadow-sm' : 'border-transparent hover:bg-white/5'}`}>
                                     {isActive && <div className="absolute inset-y-0 left-0 w-1 bg-primary shadow-sm" />}
-                                    <div className={`w-10 h-10 rounded-lg border shadow-sm bg-transparent flex items-center justify-center text-xs font-bold shrink-0 overflow-hidden transition-colors ${isActive ? 'border-primary/50 text-primary' : 'border-white/10 text-slate-400 group-hover:border-white/20'}`}>
-                                      {ch.logo ? <img src={ch.logo} alt="" className="w-full h-full object-cover" /> : ch.name.substring(0, 2).toUpperCase()}
-                                    </div>
+                                    <ChannelLogo channel={ch} className="w-10 h-10 shrink-0" customLogo={customLogos[ch.name] === 'none' ? undefined : customLogos[ch.name]} isAdmin={isAdmin} onUpdateLogo={handleUpdateLogo} />
                                     <div className="flex-1 min-w-0 text-left">
                                       <div className={`truncate text-sm font-semibold transition-colors ${isActive ? 'text-primary' : 'text-slate-200 group-hover:text-white'}`}>{ch.name}</div>
                                       <div className="truncate text-[10px] uppercase tracking-widest text-slate-500 mt-0.5 font-medium leading-tight">{ch.group}</div>
@@ -1359,10 +1445,10 @@ export default function App() {
                         {/* Profile row */}
                         <div className="flex items-center gap-4 sm:gap-5 relative z-10">
                           <div className="w-20 h-20 rounded-2xl flex items-center justify-center text-xl font-black shadow-[0_0_20px_rgba(20,184,166,0.4)] overflow-hidden border-2 border-primary bg-teal-900/50 shrink-0">
-                            <img src="https://api.dicebear.com/7.x/lorelei/svg?seed=Farabi&backgroundColor=0d9488" alt="Developer" className="w-full h-full object-cover" />
+                            <img src={devPhoto} alt="Developer" className="w-full h-full object-cover" />
                           </div>
                           <div>
-                            <h2 className="font-black text-lg sm:text-xl tracking-wide text-slate-50 uppercase drop-shadow-[0_2px_10px_rgba(20,184,166,0.5)]">FARABI AHMED<br/>SHAKIL</h2>
+                            <h2 className="font-black text-lg sm:text-xl tracking-wide text-slate-50 uppercase drop-shadow-[0_2px_10px_rgba(20,184,166,0.5)] whitespace-pre-line">{devName.replace(/\\n/g, '\n')}</h2>
                             <div className="text-[10px] sm:text-xs text-primary font-bold tracking-widest uppercase mt-1.5 flex items-center gap-2">
                               <span className="w-2 h-2 rounded-full bg-primary shadow-[0_0_8px_rgba(45,212,191,1)]" /> DEVELOPER
                             </div>
@@ -1407,20 +1493,20 @@ export default function App() {
                           <h3 className="text-xs sm:text-sm font-bold text-primary uppercase tracking-[0.2em] drop-shadow-[0_0_8px_rgba(45,212,191,0.5)]">CONTACT</h3>
                         </div>
                         
-                        <a href="https://www.facebook.com/farabiahmedshakil11" target="_blank" rel="noopener noreferrer" className="flex items-center gap-4 p-3 sm:p-4 bg-black/60 glass-card border border-white/10 hover:border-primary/50 hover:bg-white/10/80 rounded-2xl transition-all group shadow-lg">
+                        <a href={devFbUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-4 p-3 sm:p-4 bg-black/60 glass-card border border-white/10 hover:border-primary/50 hover:bg-white/10/80 rounded-2xl transition-all group shadow-lg">
                           <div className="w-10 h-10 sm:w-12 sm:h-12 bg-[#1877F2] rounded-xl flex items-center justify-center shrink-0 shadow-[0_4px_15px_rgba(24,119,242,0.4)] group-hover:scale-105 transition-transform"><span className="font-bold text-xl sm:text-2xl text-white">f</span></div>
                           <div className="flex-1">
                             <div className="font-bold text-sm sm:text-base group-hover:text-teal-300 transition-colors text-slate-100">Facebook</div>
-                            <div className="text-[10px] sm:text-xs text-slate-400">farabiahmedshakil11</div>
+                            <div className="text-[10px] sm:text-xs text-slate-400">{devFbHandle}</div>
                           </div>
                           <ExternalLink className="w-4 h-4 sm:w-5 sm:h-5 text-slate-500 group-hover:text-primary" />
                         </a>
                         
-                        <a href="https://t.me/farabiSH" target="_blank" rel="noopener noreferrer" className="flex items-center gap-4 p-3 sm:p-4 bg-black/60 glass-card border border-white/10 hover:border-primary/50 hover:bg-white/10/80 rounded-2xl transition-all group shadow-lg">
+                        <a href={devTgUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-4 p-3 sm:p-4 bg-black/60 glass-card border border-white/10 hover:border-primary/50 hover:bg-white/10/80 rounded-2xl transition-all group shadow-lg">
                           <div className="w-10 h-10 sm:w-12 sm:h-12 bg-[#229ED9] rounded-xl flex items-center justify-center shrink-0 shadow-[0_4px_15px_rgba(34,158,217,0.4)] group-hover:scale-105 transition-transform"><span className="font-bold italic text-lg sm:text-xl text-white">TG</span></div>
                           <div className="flex-1">
                             <div className="font-bold text-sm sm:text-base group-hover:text-teal-300 transition-colors text-slate-100">Telegram</div>
-                            <div className="text-[10px] sm:text-xs text-slate-400">@farabiSH</div>
+                            <div className="text-[10px] sm:text-xs text-slate-400">{devTgHandle}</div>
                           </div>
                           <ExternalLink className="w-4 h-4 sm:w-5 sm:h-5 text-slate-500 group-hover:text-primary" />
                         </a>
@@ -1443,15 +1529,47 @@ export default function App() {
                       <div className="space-y-4">
 
                         {backendError && (
-                          <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 text-xs rounded-xl">
-                            {backendError}
+                          <div className="p-4 bg-gradient-to-r from-red-500/10 to-transparent border-l-4 border-red-500 text-red-400 text-sm font-medium rounded-r-xl shadow-sm flex items-center gap-3">
+                            <AlertCircle className="w-5 h-5 shrink-0" />
+                            <span>{backendError}</span>
                           </div>
                         )}
                         {backendSuccess && (
-                          <div className="p-3 bg-primary/10 border border-primary/20 text-primary text-xs rounded-xl">
-                            {backendSuccess}
+                          <div className="p-4 bg-gradient-to-r from-primary/10 to-transparent border-l-4 border-primary text-primary text-sm font-medium rounded-r-xl shadow-sm flex items-center gap-3">
+                            <ShieldCheck className="w-5 h-5 shrink-0" />
+                            <span>{backendSuccess}</span>
                           </div>
                         )}
+
+                        <div className="border-t border-white/5 my-4 pt-4 space-y-4">
+                          <h3 className="text-xs font-bold text-primary uppercase tracking-widest">Developer Profile</h3>
+                          <div className="space-y-4">
+                            <div>
+                              <label className="block text-[10px] text-slate-400 mb-1">Image URL</label>
+                              <input type="text" value={devConfig?.photo || ''} onChange={e => setDevConfig({...devConfig, photo: e.target.value})} placeholder="https://api.dicebear.com/..." className="w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-xs focus:outline-none focus:border-primary/50 text-slate-200" />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] text-slate-400 mb-1">Developer Name</label>
+                              <input type="text" value={devConfig?.name || ''} onChange={e => setDevConfig({...devConfig, name: e.target.value})} placeholder="FARABI AHMED\nSHAKIL" className="w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-xs focus:outline-none focus:border-primary/50 text-slate-200" />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] text-slate-400 mb-1">Facebook Handle</label>
+                              <input type="text" value={devConfig?.facebookHandle || ''} onChange={e => setDevConfig({...devConfig, facebookHandle: e.target.value})} placeholder="farabiahmedshakil11" className="w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-xs focus:outline-none focus:border-primary/50 text-slate-200" />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] text-slate-400 mb-1">Facebook URL</label>
+                              <input type="text" value={devConfig?.facebookUrl || ''} onChange={e => setDevConfig({...devConfig, facebookUrl: e.target.value})} placeholder="https://www.facebook.com/..." className="w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-xs focus:outline-none focus:border-primary/50 text-slate-200" />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] text-slate-400 mb-1">Telegram Handle</label>
+                              <input type="text" value={devConfig?.telegramHandle || ''} onChange={e => setDevConfig({...devConfig, telegramHandle: e.target.value})} placeholder="@farabiSH" className="w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-xs focus:outline-none focus:border-primary/50 text-slate-200" />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] text-slate-400 mb-1">Telegram URL</label>
+                              <input type="text" value={devConfig?.telegramUrl || ''} onChange={e => setDevConfig({...devConfig, telegramUrl: e.target.value})} placeholder="https://t.me/..." className="w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-xs focus:outline-none focus:border-primary/50 text-slate-200" />
+                            </div>
+                          </div>
+                        </div>
 
                         <div className="flex flex-col gap-3 pt-2">
                            <button 
@@ -1472,6 +1590,7 @@ export default function App() {
                                 onClick={() => {
                                   const data = {
                                     app_notice: appNotice,
+                                    devConfig: devConfig,
                                     xtream: {
                                       url: xtreamUrl,
                                       username: xtreamUser,

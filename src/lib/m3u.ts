@@ -1,6 +1,45 @@
 import { Channel } from '../types';
 
 export function parseM3U(text: string): Channel[] {
+  // First, try to parse as JSON
+  try {
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) {
+          return parsed.map((item, index) => {
+              const name = item.name || item.title || item.channel || 'Unknown';
+              let url = item.link || item.url || item.stream || '';
+              const logo = item.logo || item.icon || item.image || '';
+              const group = item.group || item.category || 'Uncategorized';
+              
+              let referer = item.referer || item.referrer || '';
+              let userAgent = item.userAgent || item.user_agent || '';
+              
+              if (url.includes('|Referer=')) {
+                const parts = url.split('|Referer=');
+                url = parts[0];
+                referer = referer || parts[1].split('&')[0];
+              }
+              if (url.includes('|User-Agent=')) {
+                const parts = url.split('|User-Agent=');
+                url = parts[0];
+                userAgent = userAgent || parts[1].split('&')[0];
+              }
+              
+              return {
+                  uid: `json-ch-${index}`,
+                  name,
+                  url,
+                  logo,
+                  group,
+                  referer,
+                  userAgent
+              };
+          }).filter(c => c.url); // filter out items without URLs
+      }
+  } catch (e) {
+      // Not valid JSON, proceed to parse as M3U
+  }
+
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
   const channels: Channel[] = [];
   let current: Partial<Channel> | null = null;
@@ -35,13 +74,19 @@ export function parseM3U(text: string): Channel[] {
       current.group = groupMatch ? groupMatch[1] : 'Uncategorized';
       
       let baseUid = idMatch && idMatch[1] ? idMatch[1] : `ch-${i}`;
-      if (uidCounts[baseUid]) {
-          uidCounts[baseUid]++;
-          current.uid = `${baseUid}_${uidCounts[baseUid]}`;
-      } else {
-          uidCounts[baseUid] = 1;
-          current.uid = baseUid;
+      
+      // Keep generating until unique
+      let candidateUid = baseUid;
+      if (uidCounts[candidateUid]) {
+          let suffix = 1;
+          while (uidCounts[`${candidateUid}_${suffix}`]) {
+              suffix++;
+          }
+          candidateUid = `${candidateUid}_${suffix}`;
       }
+      uidCounts[candidateUid] = 1;
+      current.uid = candidateUid;
+      
       referer = '';
       userAgent = '';
     } else if (line.startsWith('#EXTVLCOPT:http-referrer=')) {
@@ -68,9 +113,6 @@ export function parseM3U(text: string): Channel[] {
       if (referer) current.referer = referer;
       if (userAgent) current.userAgent = userAgent;
 
-      if (!current.uid || current.uid.startsWith('ch-')) {
-        current.uid = 'ch-' + channels.length;
-      }
       channels.push(current as Channel);
       current = null;
     }

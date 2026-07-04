@@ -10,26 +10,31 @@ if (mpegts && mpegts.LoggingControl) {
 import { Channel } from '../types';
 import { 
   Play, Pause, Maximize, Minimize, Settings, AlertCircle, MonitorPlay, PictureInPicture,
-  Volume2, VolumeX, RotateCcw, RotateCw, Subtitles, Music, ExternalLink
+  Volume2, VolumeX, Subtitles, Music, ExternalLink
 } from 'lucide-react';
 
 interface PlayerProps {
   channel: Channel | null;
+  isDevToolsOpen?: boolean;
 }
 
-export default function Player({ channel }: PlayerProps) {
+export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const mpegtsRef = useRef<any>(null);
   const dashRef = useRef<dashjs.MediaPlayerClass | null>(null);
+  const shakaRef = useRef<any>(null);
+  const videojsRef = useRef<any>(null);
+  const videojsContainerRef = useRef<HTMLDivElement>(null);
+  const clapprRef = useRef<any>(null);
+  const clapprContainerRef = useRef<HTMLDivElement>(null);
   
   const [isPlaying, setIsPlaying] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showOverlay, setShowOverlay] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [liveDelay, setLiveDelay] = useState<number | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(() => {
@@ -49,20 +54,84 @@ export default function Player({ channel }: PlayerProps) {
   const [subtitleTracks, setSubtitleTracks] = useState<{id: number, label: string}[]>([]);
   const [activeSubtitleTrack, setActiveSubtitleTrack] = useState<number>(-1);
   const [showSubtitleMenu, setShowSubtitleMenu] = useState(false);
+  const [detectedExt, setDetectedExt] = useState<string | null>(null);
+  const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
+  const [showSpeedMenu, setShowSpeedMenu] = useState(false);
 
   const [audioTracks, setAudioTracks] = useState<{id: number, label: string}[]>([]);
   const [activeAudioTrack, setActiveAudioTrack] = useState<number>(-1);
   const [showAudioMenu, setShowAudioMenu] = useState(false);
   
+  const [engine, setEngine] = useState<'Auto' | 'Shaka' | 'Clappr' | 'dash.js' | 'Video.js'>('Auto');
+  const [autoEngineIndex, setAutoEngineIndex] = useState(0);
+  const [retryTick, setRetryTick] = useState(0);
+  
+  const autoEngines = ['Default', 'Shaka', 'Video.js', 'Clappr'];
+  const activeEngine = engine === 'Auto' ? (autoEngines[autoEngineIndex] || 'Default') : engine;
+  
   const overlayTimer = useRef<NodeJS.Timeout | null>(null);
   const hasResumed = useRef(false);
+
+  useEffect(() => {
+    setAutoEngineIndex(0);
+    setPlaybackSpeed(1);
+    setDetectedExt(null);
+    
+    if (channel) {
+        const cleanUrl = channel.url.split('?')[0].split('#')[0];
+        const currentExt = (cleanUrl.split('.').pop() || '').toLowerCase();
+        // If no recognizable extension, try to probe headers
+        if (!['mp4', 'mkv', 'webm', 'm3u8', 'mpd', 'ts', 'flv'].includes(currentExt)) {
+             let active = true;
+             fetch(channel.url, { method: 'HEAD' })
+                .catch(() => fetch(`/api/proxy?url=${encodeURIComponent(channel.url)}`, { method: 'HEAD' }))
+                .then(res => {
+                    if (active && res && res.headers) {
+                        const ct = res.headers.get('content-type') || '';
+                        if (ct.includes('mpegurl') || ct.includes('m3u8')) setDetectedExt('m3u8');
+                        else if (ct.includes('dash') || ct.includes('mpd')) setDetectedExt('mpd');
+                        else if (ct.includes('mp4')) setDetectedExt('mp4');
+                        else if (ct.includes('webm')) setDetectedExt('webm');
+                        else if (ct.includes('matroska')) setDetectedExt('mkv');
+                        else if (ct.includes('video/mp2t')) setDetectedExt('ts');
+                    }
+                }).catch(() => {});
+             return () => { active = false; };
+        }
+    }
+  }, [channel, engine]);
+
+
+  useEffect(() => {
+    if (isDevToolsOpen) {
+      if (videoRef.current && !videoRef.current.paused) {
+          videoRef.current.pause();
+      }
+      if (clapprRef.current && clapprRef.current.pause) {
+          clapprRef.current.pause();
+      }
+      if (videojsRef.current && videojsRef.current.pause) {
+          videojsRef.current.pause();
+      }
+    } else if (isPlaying) {
+      if (videoRef.current && videoRef.current.paused) {
+          videoRef.current.play().catch(()=>{});
+      }
+      if (clapprRef.current && clapprRef.current.play) {
+          clapprRef.current.play();
+      }
+      if (videojsRef.current && videojsRef.current.play) {
+          videojsRef.current.play();
+      }
+    }
+  }, [isDevToolsOpen, isPlaying]);
 
   useEffect(() => {
     if (!channel || !videoRef.current) return;
     const video = videoRef.current;
     
     setLoading(true);
-    setError('');
+    setError(prev => prev.includes('Auto-switching') ? prev : '');
     setIsPlaying(false);
     setLevels([]);
     setQualityMode('auto');
@@ -87,29 +156,44 @@ export default function Player({ channel }: PlayerProps) {
         dashRef.current.destroy();
         dashRef.current = null;
     }
+    if (shakaRef.current) {
+        shakaRef.current.destroy();
+        shakaRef.current = null;
+    }
+    if (videojsRef.current) {
+        videojsRef.current.dispose();
+        videojsRef.current = null;
+    }
+    if (clapprRef.current) {
+        clapprRef.current.destroy();
+        clapprRef.current = null;
+    }
     
     const cleanUrl = channel.url.split('?')[0].split('#')[0];
-    const ext = (cleanUrl.split('.').pop() || '').toLowerCase();
+    const ext = detectedExt || (cleanUrl.split('.').pop() || '').toLowerCase();
     const directExts = ['mp4', 'mkv', 'webm', 'mov', 'm4v', 'ogg', 'ogv', 'avi', 'wmv', 'flv', 'mp3', 'aac', 'flac', 'wav', 'm4a'];
     const isM3u8Ext = ext === 'm3u8' || channel.url.includes('.m3u8');
     const isDashExt = ext === 'mpd' || channel.url.includes('.mpd');
     const isTsExt = ext === 'ts' || (channel.url.includes('.ts') && !isM3u8Ext && !isDashExt);
     const isDirectExt = directExts.includes(ext);
     
+    // Check if the browser natively supports MKV/WebM
+    const canPlayMkv = videoRef.current ? videoRef.current.canPlayType('video/x-matroska') !== '' || videoRef.current.canPlayType('video/mkv') !== '' : false;
+    const canPlayWebm = videoRef.current ? videoRef.current.canPlayType('video/webm') !== '' : true;
+    
     const PROXIES = [
         '',
         window.location.origin + '/api/proxy?url=',
-        'https://corsproxy.io/?',
-        'https://api.cors.lol/?url=',
-        'https://thingproxy.freeboard.io/fetch/',
-        'https://api.codetabs.com/v1/proxy?quest='
+        'https://corsproxy.io/?url=',
+        'https://api.allorigins.win/raw?url='
     ];
     const maxProxyIndex = PROXIES.length - 1;
     const getProxiedUrl = (url: string, proxyIdx: number): string => {
+        
         if (proxyIdx === 0) return url;
         const p = PROXIES[proxyIdx];
         if (p.includes('/api/proxy?url=')) {
-            let resUrl = p + encodeURIComponent(url);
+            let resUrl = p + encodeURIComponent(url) + '&rewrite=1';
             if (channel.referer) {
                 resUrl += `&referer=${encodeURIComponent(channel.referer)}`;
             }
@@ -125,7 +209,22 @@ export default function Player({ channel }: PlayerProps) {
     };
 
     let isDestroyed = false;
+    let isHandlingFailure = false;
     const isMixedContent = window.location.protocol === 'https:' && channel.url.startsWith('http://');
+
+    const handleEngineFailure = (msg: string) => {
+        if (isDestroyed || isHandlingFailure) return;
+        isHandlingFailure = true;
+        if (engine === 'Auto' && autoEngineIndex < autoEngines.length - 1) {
+            const nextEngine = autoEngines[autoEngineIndex + 1];
+            setError(`Stream failed. Auto-switching to ${nextEngine} player...`);
+            setLoading(true);
+            if (!isDestroyed) setAutoEngineIndex(prev => prev + 1);
+        } else {
+            setError(msg);
+            setLoading(false);
+        }
+    };
 
     const tryNativeFirst = (nIdx: number, isFallback = false) => {
         if (isDestroyed) return;
@@ -142,6 +241,10 @@ export default function Player({ channel }: PlayerProps) {
             if (nIdx < maxProxyIndex) {
                  tryNativeFirst(nIdx + 1, isFallback);
             } else {
+                 if (isFallback) {
+                     handleEngineFailure('Stream offline or unsupported format.');
+                     return;
+                 }
                  // Native failed on all proxies, fallback to Dash/Hls/MpegTS
                  if (isTsExt && mpegts.getFeatureList().mseLivePlayback) {
                      initMpegts(0);
@@ -152,15 +255,9 @@ export default function Player({ channel }: PlayerProps) {
                  } else if (ext === 'flv' && mpegts.getFeatureList().mseLivePlayback) {
                      initMpegts(0);
                  } else if (isDirectExt) {
-                     setError('Video format not supported by browser (e.g., MKV), or stream is offline. Please try a different proxy or use an external player.');
-                     setLoading(false);
+                     handleEngineFailure('Video format not supported by browser (e.g., MKV), or stream is offline.');
                  } else {
-                     if (isFallback) {
-                         setError('Stream format not supported or offline.');
-                         setLoading(false);
-                     } else {
-                         initHls(0); // last resort
-                     }
+                     initHls(0); // last resort
                  }
             }
         };
@@ -192,22 +289,34 @@ export default function Player({ channel }: PlayerProps) {
 
         const dashPlayer = dashjs.MediaPlayer().create();
         dashPlayer.updateSettings({
-            streaming: { retryAttempts: { MPD: 0 } }
+            streaming: { 
+                retryAttempts: { MPD: 2 },
+                liveCatchup: {
+                    enabled: true
+                }
+            }
         });
         dashRef.current = dashPlayer;
+        
+        dashPlayer.extend("RequestModifier", function () {
+            return {
+                modifyRequestHeader: function (xhr: any) {
+                    return xhr;
+                },
+                modifyRequestURL: function (url: string) {
+                    if (proxyIdx > 0 && !url.includes('/api/proxy')) {
+                        return getProxiedUrl(url, proxyIdx);
+                    }
+                    return url;
+                }
+            };
+        }, true);
         
         dashPlayer.on(dashjs.MediaPlayer.events.ERROR, (e: any) => {
             if (proxyIdx < maxProxyIndex) {
                  initDash(proxyIdx + 1);
             } else {
-                 setError('DASH Error: Stream playback failed. Retrying in 5s...');
-                 setTimeout(() => {
-                     if (dashRef.current === dashPlayer) {
-                         setError('');
-                         setLoading(true);
-                         initDash(0);
-                     }
-                 }, 5000);
+                 handleEngineFailure('DASH Error: Stream playback failed.');
             }
         });
         dashPlayer.on(dashjs.MediaPlayer.events.PLAYBACK_PLAYING, () => {
@@ -230,7 +339,7 @@ export default function Player({ channel }: PlayerProps) {
         });
 
         try {
-            dashPlayer.initialize(videoRef.current as HTMLMediaElement, getProxiedUrl(channel.url, proxyIdx), true);
+            dashPlayer.initialize(videoRef.current as HTMLMediaElement, channel.url, true);
         } catch(e: any) {
             setError('Stream initialization failed: ' + (e.message || 'Invalid DASH format'));
             setLoading(false);
@@ -253,6 +362,11 @@ export default function Player({ channel }: PlayerProps) {
                 type: 'mpegts',
                 isLive: true,
                 url: parsedUrl
+            }, {
+                enableWorker: true,
+                liveBufferLatencyChasing: true,
+                liveBufferLatencyMaxLatency: 3,
+                liveBufferLatencyMinRemain: 0.3
             });
             mpegtsRef.current = player;
             if (videoRef.current) {
@@ -275,17 +389,9 @@ export default function Player({ channel }: PlayerProps) {
                 } else {
                     const isIp = /http:\/\/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/.test(channel.url);
                     if (isIp && window.location.protocol === 'https:') {
-                        setError('Connection failed. For BDIX / local IPs, please allow "Insecure Content" in your browser Site Settings. Cloud proxies cannot reach them.');
-                        setLoading(false);
+                        handleEngineFailure('Connection failed. For BDIX / local IPs, please allow "Insecure Content" in your browser Site Settings.');
                     } else {
-                        setError('MPEG-TS Error: ' + errorType + ' ' + errorDetail + '. Retrying in 5s...');
-                        setTimeout(() => {
-                            if (mpegtsRef.current === player) {
-                                setError('');
-                                setLoading(true);
-                                initMpegts(0);
-                            }
-                        }, 5000);
+                        handleEngineFailure('MPEG-TS Error: ' + errorType + ' ' + errorDetail);
                     }
                 }
             });
@@ -293,8 +399,7 @@ export default function Player({ channel }: PlayerProps) {
                 setLoading(false);
             });
         } catch(e: any) {
-            setError('Stream initialization failed: ' + (e.message || 'Invalid format'));
-            setLoading(false);
+            handleEngineFailure('Stream initialization failed: ' + (e.message || 'Invalid format'));
         }
     };
 
@@ -305,26 +410,24 @@ export default function Player({ channel }: PlayerProps) {
         }
 
         if (!Hls.isSupported()) {
-            setError('Stream format unsupported or blocked.');
-            setLoading(false);
+            handleEngineFailure('Stream format unsupported or blocked.');
             return;
         }
 
         const hls = new Hls({ 
             enableWorker: true, 
-            lowLatencyMode: false, 
+            lowLatencyMode: true, 
             backBufferLength: 90,
-            manifestLoadingMaxRetry: 0,
-            manifestLoadingTimeOut: 4000,
-            xhrSetup: (xhr, url) => {
-                if (proxyIdx > 0) {
-                    xhr.open('GET', getProxiedUrl(url, proxyIdx), true);
-                }
-            }
+            liveSyncDurationCount: 3,
+            liveMaxLatencyDurationCount: 10,
+            manifestLoadingMaxRetry: 2,
+            manifestLoadingRetryDelay: 1000,
+            levelLoadingMaxRetry: 2,
+            fragLoadingMaxRetry: 2
         });
         
         hlsRef.current = hls;
-        hls.loadSource(channel.url); 
+        hls.loadSource(getProxiedUrl(channel.url, proxyIdx)); 
         if (videoRef.current) hls.attachMedia(videoRef.current);
         
         hls.on(Hls.Events.MANIFEST_PARSED, (_, data) => {
@@ -353,45 +456,124 @@ export default function Player({ channel }: PlayerProps) {
                     if (proxyIdx < maxProxyIndex) {
                         initHls(proxyIdx + 1);
                     } else {
-                        const response = data.response;
-                        if (response && (response.code === 403 || response.code === 401 || response.code === 404)) {
-                            hls.destroy();
-                            setError(`Stream access denied or not found (${response.code}). Retrying in 5s...`);
-                        } else {
-                            const isIp = /http:\/\/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/.test(channel.url);
-                            if (isIp && window.location.protocol === 'https:') {
-                                setError('Connection failed. For BDIX or local IP addresses, you must allow "Insecure Content" in your browser\'s Site Settings for this page.');
-                                setLoading(false);
-                                return;
-                            } else {
-                                setError('Stream blocked by CORS or network timeout. Retrying in 5s...');
-                            }
-                        }
-                        
-                        setTimeout(() => {
-                            if (hlsRef.current === hls) {
-                                setError('');
-                                setLoading(true);
-                                initHls(0);
-                            }
-                        }, 5000);
+                        hls.destroy();
+                        handleEngineFailure('HLS Error: Network error.');
                     }
                 } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
                     hls.recoverMediaError();
                 } else {
                     hls.destroy();
-                    if (!isM3u8Ext && !isDirectExt && !isDashExt && !isTsExt) {
-                        tryNativeFirst(0, true);
-                    } else {
-                        setError('Playback error. Stream format unsupported.');
-                        setLoading(false);
-                    }
+                    handleEngineFailure('HLS Error: Media error.');
                 }
             }
         });
     };
 
-    if (isDashExt) {
+    const initShaka = async (proxyIdx: number) => {
+        if (!videoRef.current) return;
+        try {
+            const shaka = (await import('shaka-player/dist/shaka-player.compiled')).default;
+            if (shakaRef.current) {
+                await shakaRef.current.destroy();
+                shakaRef.current = null;
+            }
+            const player = new shaka.Player(videoRef.current);
+            shakaRef.current = player;
+            player.addEventListener('error', () => { 
+                if (proxyIdx < maxProxyIndex) initShaka(proxyIdx + 1);
+                else handleEngineFailure('Shaka Player Error'); 
+            });
+            await player.load(getProxiedUrl(channel.url, proxyIdx));
+            setLoading(false);
+            if (videoRef.current) videoRef.current.play().catch(()=>{});
+        } catch (e) {
+            if (proxyIdx < maxProxyIndex) initShaka(proxyIdx + 1);
+            else handleEngineFailure('Shaka Player Error');
+        }
+    };
+
+    const initVideoJs = async (proxyIdx: number) => {
+        if (!videojsContainerRef.current) return;
+        try {
+            const videojs = (await import('video.js')).default;
+            // @ts-ignore
+            await import('video.js/dist/video-js.css');
+            
+            // Suppress VideoJS console errors
+            if (videojs.log && videojs.log.level) {
+                videojs.log.level('off');
+            }
+            
+            if (videojsRef.current) {
+                videojsRef.current.dispose();
+                videojsRef.current = null;
+            }
+            
+            // Re-create the video element since video.js dispose() destroys it
+            videojsContainerRef.current.innerHTML = `
+                <video class="video-js vjs-default-skin w-full h-full object-contain" playsinline></video>
+            `;
+            const videoEl = videojsContainerRef.current.querySelector('video') as HTMLVideoElement;
+            
+            const srcObj: any = { src: getProxiedUrl(channel.url, proxyIdx) };
+            if (isDashExt) srcObj.type = 'application/dash+xml';
+            else if (isM3u8Ext) srcObj.type = 'application/x-mpegURL';
+            else if (ext === 'mp4') srcObj.type = 'video/mp4';
+            else if (ext === 'webm') srcObj.type = 'video/webm';
+            else if (ext === 'ogg') srcObj.type = 'video/ogg';
+
+            const player = videojs(videoEl, {
+                controls: true,
+                autoplay: true,
+                fluid: false,
+                errorDisplay: false,
+                sources: [srcObj]
+            });
+            videojsRef.current = player;
+            player.on('error', () => { 
+                const err = player.error();
+                const errMsg = err ? `Video.js Error: ${err.message || 'CODE ' + err.code}` : 'Video.js Error';
+                if (proxyIdx < maxProxyIndex) initVideoJs(proxyIdx + 1);
+                else handleEngineFailure(errMsg); 
+            });
+            setLoading(false);
+        } catch (e) {
+            if (proxyIdx < maxProxyIndex) initVideoJs(proxyIdx + 1);
+            else handleEngineFailure('Video.js Error');
+        }
+    };
+
+    const initClappr = async (proxyIdx: number) => {
+        if (!clapprContainerRef.current) return;
+        try {
+            const Clappr = (await import('@clappr/player')).default;
+            const player = new Clappr.Player({
+                source: getProxiedUrl(channel.url, proxyIdx),
+                autoPlay: true,
+                width: '100%',
+                height: '100%',
+                chromeless: false,
+                parentId: clapprContainerRef.current
+            });
+            player.on(Clappr.Events.PLAYER_ERROR, () => { 
+                if (proxyIdx < maxProxyIndex) initClappr(proxyIdx + 1);
+                else handleEngineFailure('Clappr Error'); 
+            });
+            clapprRef.current = player;
+            setLoading(false);
+        } catch (e) {
+            if (proxyIdx < maxProxyIndex) initClappr(proxyIdx + 1);
+            else handleEngineFailure('Clappr Error');
+        }
+    };
+
+    if (activeEngine === 'Shaka') {
+        initShaka(0);
+    } else if (activeEngine === 'Video.js') {
+        initVideoJs(0);
+    } else if (activeEngine === 'Clappr') {
+        initClappr(0);
+    } else if (isDashExt || activeEngine === 'dash.js') {
         initDash(0);
     } else if ((isTsExt || ext === 'flv') && mpegts.getFeatureList().mseLivePlayback) {
         initMpegts(0);
@@ -417,7 +599,7 @@ export default function Player({ channel }: PlayerProps) {
             dashRef.current = null;
         }
     };
-  }, [channel]);
+  }, [channel, engine, autoEngineIndex, retryTick]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -443,27 +625,8 @@ export default function Player({ channel }: PlayerProps) {
     };
 
     const onTimeUpdate = () => {
-      let delay: number | null = null;
-      if (hlsRef.current && typeof hlsRef.current.latency === 'number') {
-          delay = hlsRef.current.latency;
-      } else if (video.seekable && video.seekable.length > 0) {
-          const end = video.seekable.end(video.seekable.length - 1);
-          if (end > 0) {
-              delay = end - video.currentTime;
-          }
-      }
-      
       setCurrentTime(video.currentTime);
       setDuration(video.duration || 0);
-
-      // Assume stream is live if duration is infinite or extremely long, or if delay is small compared to typical duration
-      if (delay !== null && delay >= 0 && (video.duration === Infinity || video.duration > 3600)) {
-          setLiveDelay(delay);
-      } else if (delay !== null && delay >= 0 && hlsRef.current) {
-          setLiveDelay(delay);
-      } else {
-          setLiveDelay(null);
-      }
 
       // Resume & Save Progress for VODs
       if (video.duration && video.duration < Infinity && channel) {
@@ -515,15 +678,6 @@ export default function Player({ channel }: PlayerProps) {
       if (videoRef.current?.paused) videoRef.current.play().catch(()=>{});
       else videoRef.current?.pause();
   };
-  
-  const seekToLive = (e: React.MouseEvent) => {
-      e.stopPropagation();
-      if (hlsRef.current && typeof hlsRef.current.liveSyncPosition === 'number') {
-          videoRef.current!.currentTime = hlsRef.current.liveSyncPosition;
-      } else if (videoRef.current && videoRef.current.seekable.length > 0) {
-          videoRef.current.currentTime = videoRef.current.seekable.end(videoRef.current.seekable.length - 1);
-      }
-  };
 
   const toggleFullscreen = () => {
       if (!document.fullscreenElement) {
@@ -557,6 +711,18 @@ export default function Player({ channel }: PlayerProps) {
       if (videoRef.current) {
           videoRef.current.currentTime = time;
           setCurrentTime(time);
+      }
+  };
+
+  const skipForward = () => {
+      if (videoRef.current) {
+          videoRef.current.currentTime = Math.min(videoRef.current.duration, videoRef.current.currentTime + 10);
+      }
+  };
+
+  const skipBackward = () => {
+      if (videoRef.current) {
+          videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime - 10);
       }
   };
 
@@ -620,29 +786,11 @@ export default function Player({ channel }: PlayerProps) {
       }
   };
 
-  const skipForward = () => {
-      if (videoRef.current) {
-          videoRef.current.currentTime = Math.min(videoRef.current.duration, videoRef.current.currentTime + 10);
-      }
-  };
-
-  const skipBackward = () => {
-      if (videoRef.current) {
-          videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime - 10);
-      }
-  };
-
   useEffect(() => {
       const handleKeyDown = (e: KeyboardEvent) => {
           if (['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement)?.tagName)) return;
 
           switch (e.key) {
-              case 'ArrowRight':
-                  skipForward();
-                  break;
-              case 'ArrowLeft':
-                  skipBackward();
-                  break;
               case 'ArrowUp':
                   e.preventDefault();
                   if (videoRef.current) {
@@ -656,6 +804,14 @@ export default function Player({ channel }: PlayerProps) {
                           localStorage.setItem('player_muted', 'false');
                       }
                   }
+                  break;
+              case 'ArrowRight':
+                  e.preventDefault();
+                  skipForward();
+                  break;
+              case 'ArrowLeft':
+                  e.preventDefault();
+                  skipBackward();
                   break;
               case 'ArrowDown':
                   e.preventDefault();
@@ -695,13 +851,40 @@ export default function Player({ channel }: PlayerProps) {
         ref={containerRef} 
         className={`relative flex flex-col w-full h-full bg-transparent overflow-hidden group select-none ${isFullscreen ? 'fixed inset-0 z-50' : ''}`}
         onMouseMove={handleInteraction}
+        onContextMenu={(e) => { if (import.meta.env.VITE_ENABLE_ANTI_DEBUG !== 'false') e.preventDefault(); }}
         onMouseLeave={() => { if(isPlaying && !showQualityMenu) setShowOverlay(false); }}
         onTouchEnd={() => { setShowOverlay(true); handleInteraction(); }}
-        onClick={() => { if(!showOverlay) handleInteraction(); else setShowQualityMenu(false); }}
+        onClick={(e) => { 
+            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            if (e.detail === 2) {
+                // Double click / tap
+                if (x < rect.width / 3) skipBackward();
+                else if (x > (rect.width * 2) / 3) skipForward();
+                else toggleFullscreen();
+            } else {
+                if(!showOverlay) handleInteraction(); else { setShowQualityMenu(false); setShowSpeedMenu(false); setShowSubtitleMenu(false); setShowAudioMenu(false); }
+            }
+        }}
     >
+        <style>{`
+            .vjs-error-display { display: none !important; }
+            .vjs-modal-dialog { display: none !important; }
+        `}</style>
+        <div 
+            ref={videojsContainerRef} 
+            className="w-full h-full absolute inset-0 z-0 [&_.video-js]:!w-full [&_.video-js]:!h-full [&_.vjs-error-display]:!hidden" 
+            style={{ display: activeEngine === 'Video.js' && !isDevToolsOpen ? 'block' : 'none' }} 
+        />
+        <div 
+            ref={clapprContainerRef} 
+            className="w-full h-full absolute inset-0 z-0" 
+            style={{ display: activeEngine === 'Clappr' && !isDevToolsOpen ? 'block' : 'none' }} 
+        />
         <video 
             ref={videoRef} 
-            className="w-full h-full object-contain"
+            className="w-full h-full object-contain relative z-10"
+            style={{ display: (activeEngine === 'Clappr' || activeEngine === 'Video.js') ? 'none' : 'block' }}
             autoPlay 
             playsInline
             onClick={togglePlay}
@@ -725,32 +908,70 @@ export default function Player({ channel }: PlayerProps) {
         )}
         
         {loading && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 backdrop-blur-md z-10 pointer-events-none transition-all duration-500">
-                <div className="relative flex items-center justify-center">
-                   <div className="absolute inset-0 border-2 border-white/10 rounded-full w-12 h-12"></div>
-                   <div className="animate-spin w-12 h-12 border-2 border-primary border-t-transparent border-l-transparent rounded-full shadow-[0_0_15px_rgba(20,184,166,0.3)]" />
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-md z-30 pointer-events-none transition-all duration-500">
+                <div className="relative flex items-center justify-center mb-6">
+                   <div className="absolute inset-0 border-[3px] border-white/5 rounded-full w-16 h-16 blur-[1px]"></div>
+                   <div className="animate-spin w-16 h-16 border-[3px] border-primary border-t-transparent border-l-transparent rounded-full shadow-[0_0_20px_rgba(20,184,166,0.4)]" />
+                   <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="w-2 h-2 bg-primary rounded-full animate-pulse shadow-[0_0_10px_rgba(20,184,166,0.8)]" />
+                   </div>
                 </div>
-                <h3 className="mt-6 text-primary font-semibold tracking-[0.25em] uppercase text-[10px] animate-pulse">Connecting</h3>
+                <h3 className="text-white/80 font-medium tracking-[0.3em] uppercase text-xs animate-pulse">Initializing</h3>
             </div>
         )}
         
-        {error && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-xl z-10 transition-all duration-500">
-                <div className="w-16 h-16 bg-red-500/5 border border-red-500/10 text-red-500 rounded-full flex items-center justify-center mb-6 shadow-[0_0_30px_rgba(239,68,68,0.15)]">
-                  <AlertCircle className="w-7 h-7" />
+        
+        {isDevToolsOpen && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black z-[9999] pointer-events-auto">
+                <div className="text-center p-8">
+                    <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center mx-auto mb-6 border border-red-500/20">
+                        <AlertCircle className="w-8 h-8 text-red-500" />
+                    </div>
+                    <h3 className="text-xl font-bold text-white mb-3">Security Alert</h3>
+                    <p className="text-slate-400 text-sm">Developer Tools detected. Playback has been temporarily disabled.</p>
                 </div>
-                <h3 className="text-xl font-bold text-white mb-2 tracking-wide">Playback Interrupted</h3>
-                <p className="text-slate-400 mb-6 px-4 text-center max-w-sm text-sm leading-relaxed">{error}</p>
-                <div className="flex flex-wrap items-center justify-center gap-3 px-4">
-                  <a href={`vlc://${channel?.url || ''}`} className="flex items-center gap-2 px-4 py-2.5 bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 rounded-xl transition-colors border border-orange-500/30 font-semibold text-sm shadow-lg shadow-orange-500/5">
-                    <MonitorPlay className="w-4 h-4" /> Open in VLC
-                  </a>
-                  <a href={`intent:${channel?.url || ''}#Intent;package=com.mxtech.videoplayer.ad;end`} className="flex items-center gap-2 px-4 py-2.5 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 rounded-xl transition-colors border border-blue-500/30 font-semibold text-sm shadow-lg shadow-blue-500/5">
-                    <MonitorPlay className="w-4 h-4" /> MX Player
-                  </a>
-                  <a href={channel?.url || '#'} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 px-4 py-2.5 bg-slate-700/50 text-slate-300 hover:bg-slate-700 hover:text-white rounded-xl transition-colors border border-slate-600 font-semibold text-sm">
-                    <ExternalLink className="w-4 h-4" /> Open Link
-                  </a>
+            </div>
+        )}
+
+{error && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/95 backdrop-blur-xl z-40 pointer-events-auto transition-all duration-500">
+                <div className="bg-slate-900/60 border border-white/10 p-8 rounded-[2rem] max-w-md w-full text-center shadow-[0_0_80px_rgba(0,0,0,0.8)] transform scale-100 animate-in fade-in zoom-in duration-300 mx-4 relative overflow-hidden">
+                    <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-red-500/50 to-transparent"></div>
+                    <div className="w-20 h-20 bg-red-500/10 rounded-full flex items-center justify-center mx-auto mb-6 border border-red-500/20 relative">
+                        <div className="absolute inset-0 rounded-full animate-ping bg-red-500/10" style={{ animationDuration: '3s' }}></div>
+                        <AlertCircle className="w-10 h-10 text-red-400 relative z-10" />
+                    </div>
+                    <h3 className="text-2xl font-bold text-white mb-3 tracking-tight">{error.includes('Auto-switching') ? 'Switching Engine' : 'Playback Failed'}</h3>
+                    <p className="text-slate-300 text-sm mb-6 leading-relaxed px-2 font-medium">{error.includes('Auto-switching') ? error : 'The stream is currently offline, unsupported, or geo-blocked.'}</p>
+                    
+                    {!error.includes('Auto-switching') && (
+                        <>
+                        <div className="border border-red-500/10 bg-red-500/5 rounded-2xl px-5 py-4 mb-8 shadow-inner text-left overflow-y-auto max-h-32 custom-scrollbar">
+                            <p className="text-slate-400 text-xs font-mono break-words leading-relaxed">
+                                {error}
+                            </p>
+                        </div>
+                        <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mt-2">
+                            <button 
+                                onClick={() => { 
+                                    setError(''); 
+                                    setLoading(true); 
+                                    setAutoEngineIndex(0); 
+                                    setRetryTick(t => t + 1); 
+                                }}
+                                className="w-full sm:w-auto px-8 py-3.5 bg-white text-black hover:bg-slate-200 rounded-xl text-sm font-bold transition-all hover:scale-[1.02] active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-black shadow-lg"
+                            >
+                                Try Again
+                            </button>
+                            <button 
+                                onClick={() => setError('')}
+                                className="w-full sm:w-auto px-8 py-3.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-xl text-sm font-semibold transition-colors border border-white/10"
+                            >
+                                Dismiss
+                            </button>
+                        </div>
+                        </>
+                    )}
                 </div>
             </div>
         )}
@@ -759,26 +980,42 @@ export default function Player({ channel }: PlayerProps) {
         <div className={`absolute inset-0 flex flex-col justify-between transition-opacity duration-300 pointer-events-none z-20 ${showOverlay || showQualityMenu ? 'opacity-100' : 'opacity-0'}`}>
             <div className="flex justify-between items-start p-3 sm:p-4 bg-gradient-to-b from-black/80 to-transparent pointer-events-auto">
                 <div className="flex items-center gap-3 bg-black/60 glass-card backdrop-blur-md px-3.5 py-1.5 sm:py-2 rounded-xl border border-slate-700/50 shadow-lg max-w-[70%]">
-                    {liveDelay !== null && liveDelay > 5 ? (
-                        <button onClick={seekToLive} className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 px-2 py-0.5 rounded text-[10px] font-bold text-slate-300 transition-colors">
-                            <span className="w-1.5 h-1.5 rounded-full bg-slate-400 shrink-0" />
-                            -{Math.round(liveDelay)}s
-                        </button>
-                    ) : (
-                        <div className="flex items-center gap-1.5 px-1 py-0.5" title="Live">
-                            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse shrink-0 shadow-[0_0_8px_rgba(239,68,68,0.6)]" />
-                            <span className="text-[10px] font-bold text-red-500 uppercase tracking-wider hidden sm:block">Live</span>
-                        </div>
-                    )}
                     <span className="font-semibold text-xs sm:text-sm tracking-wide text-white truncate border-l border-slate-700 pl-3">{channel.name}</span>
                 </div>
-                <div className="flex items-center gap-2">
-                    <button onClick={togglePiP} className="p-1.5 sm:p-2 hover:bg-white/10 rounded-full text-white transition-colors backdrop-blur-sm bg-black/20" title="Picture in Picture">
-                        <PictureInPicture className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                    </button>
+                <div className="flex flex-col items-end gap-2">
+                    <div className="flex items-center bg-slate-900/90 backdrop-blur-md rounded-full border border-slate-700 p-1 shadow-lg pointer-events-auto">
+                        {['Auto', 'Video.js', 'Shaka', 'dash.js', 'Clappr'].map(eng => {
+                            let btnClass = 'text-slate-400 hover:text-white';
+                            if (engine === 'Auto') {
+                                if (eng === 'Auto') {
+                                    btnClass = activeEngine === 'Default' ? 'bg-[#52d869] text-black shadow-md' : 'border border-[#52d869] text-[#52d869] bg-[#52d869]/10';
+                                } else if (activeEngine === eng) {
+                                    btnClass = 'bg-[#52d869] text-black shadow-md';
+                                }
+                            } else if (engine === eng) {
+                                btnClass = 'bg-[#52d869] text-black shadow-md';
+                            }
+                            
+                            return (
+                                <button
+                                    key={eng}
+                                    onClick={(e) => { e.stopPropagation(); setEngine(eng as any); }}
+                                    className={`px-2 py-1 sm:px-3 sm:py-1.5 text-[10px] sm:text-xs font-medium rounded-full transition-all ${btnClass}`}
+                                >
+                                    {eng}
+                                </button>
+                            );
+                        })}
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <button aria-label="Picture in Picture" onClick={togglePiP} className="p-1.5 sm:p-2 hover:bg-white/10 rounded-full text-white transition-colors backdrop-blur-sm bg-black/20" title="Picture in Picture">
+                            <PictureInPicture className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                        </button>
+                    </div>
                 </div>
             </div>
             
+            {!(activeEngine === 'Clappr' || activeEngine === 'Video.js') && (
             <div className="flex-1 flex items-center justify-center pointer-events-none">
               {!loading && !error && (
                 <button 
@@ -789,53 +1026,40 @@ export default function Player({ channel }: PlayerProps) {
                 </button>
               )}
             </div>
+            )}
             
+            {!(activeEngine === 'Clappr' || activeEngine === 'Video.js') && (
             <div className="p-4 sm:p-6 bg-gradient-to-t from-black/90 via-black/60 to-transparent pointer-events-auto flex flex-col relative w-full items-center justify-end pb-6">
-                {duration > 0 && duration !== Infinity && (
-                    <div className="flex items-center gap-3 w-full max-w-4xl px-4 sm:px-6 mb-3 sm:mb-4">
-                        <span className="text-xs font-medium text-slate-300 min-w-[40px] text-right">{formatTime(currentTime)}</span>
-                        <div className="flex-1 relative flex items-center group/slider h-2 cursor-pointer">
-                            <input 
-                                type="range" 
-                                min="0" 
-                                max={duration} 
-                                step="0.1"
-                                value={currentTime} 
-                                onChange={handleSeek}
-                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                            />
-                            <div className="w-full h-1.5 bg-white/20 rounded-full overflow-hidden">
-                                <div 
-                                    className="h-full bg-primary rounded-full relative"
-                                    style={{ width: `${(currentTime / duration) * 100}%` }}
-                                />
+                
+                {/* Progress Bar */}
+                {duration > 0 && duration < Infinity && (
+                    <div className="w-full max-w-4xl mb-4 group/progress cursor-pointer relative" onClick={(e) => {
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        const pos = (e.clientX - rect.left) / rect.width;
+                        if (videoRef.current) {
+                            videoRef.current.currentTime = pos * duration;
+                            setCurrentTime(pos * duration);
+                        }
+                    }}>
+                        <div className="w-full h-1.5 sm:h-2 bg-white/20 rounded-full overflow-hidden transition-all group-hover/progress:h-2 sm:group-hover/progress:h-2.5">
+                            <div className="h-full bg-primary relative" style={{ width: `${(currentTime / duration) * 100}%` }}>
+                                <div className="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full scale-0 group-hover/progress:scale-100 transition-transform"></div>
                             </div>
-                            <div 
-                                className="absolute h-3 w-3 sm:h-4 sm:w-4 bg-white rounded-full shadow transition-transform scale-0 group-hover/slider:scale-100 -ml-1.5 sm:-ml-2 pointer-events-none"
-                                style={{ left: `${(currentTime / duration) * 100}%` }}
-                            />
                         </div>
-                        <span className="text-xs font-medium text-slate-300 min-w-[40px]">{formatTime(duration)}</span>
+                        <div className="flex justify-between text-[10px] sm:text-xs font-semibold text-slate-300 mt-2 font-mono tracking-wide">
+                            <span>{formatTime(currentTime)}</span>
+                            <span>{formatTime(duration)}</span>
+                        </div>
                     </div>
                 )}
                 
                 <div className="flex items-center w-full justify-between px-4 sm:px-6 select-none max-w-4xl">
                     <div className="flex items-center gap-4">
-                        {duration > 0 && duration !== Infinity && (
-                            <>
-                                <button onClick={togglePlay} className="text-slate-300 hover:text-white transition-colors focus:outline-none shrink-0" title={isPlaying ? "Pause" : "Play"}>
-                                    {isPlaying ? <Pause className="w-5 h-5 sm:w-6 sm:h-6 fill-current" /> : <Play className="w-5 h-5 sm:w-6 sm:h-6 fill-current" />}
-                                </button>
-                                <button onClick={skipBackward} className="text-slate-300 hover:text-white transition-colors focus:outline-none shrink-0" title="Skip Backward 10s">
-                                    <RotateCcw className="w-4 h-4 sm:w-5 sm:h-5" />
-                                </button>
-                                <button onClick={skipForward} className="text-slate-300 hover:text-white transition-colors focus:outline-none shrink-0" title="Skip Forward 10s">
-                                    <RotateCw className="w-4 h-4 sm:w-5 sm:h-5" />
-                                </button>
-                            </>
-                        )}
+                        <button aria-label="Play/Pause" onClick={togglePlay} className="text-slate-300 hover:text-white transition-colors focus:outline-none shrink-0" title={isPlaying ? "Pause" : "Play"}>
+                            {isPlaying ? <Pause className="w-5 h-5 sm:w-6 sm:h-6 fill-current" /> : <Play className="w-5 h-5 sm:w-6 sm:h-6 fill-current" />}
+                        </button>
                         <div className="flex items-center gap-2 group/volume relative">
-                            <button onClick={toggleMute} className="text-slate-300 hover:text-white transition-colors focus:outline-none shrink-0" title={isMuted ? "Unmute" : "Mute"}>
+                            <button aria-label="Mute/Unmute" onClick={toggleMute} className="text-slate-300 hover:text-white transition-colors focus:outline-none shrink-0" title={isMuted ? "Unmute" : "Mute"}>
                                 {isMuted || volume === 0 ? <VolumeX className="w-5 h-5 sm:w-6 sm:h-6" /> : <Volume2 className="w-5 h-5 sm:w-6 sm:h-6" />}
                             </button>
                             <input 
@@ -851,6 +1075,24 @@ export default function Player({ channel }: PlayerProps) {
                     </div>
                     
                     <div className="flex items-center gap-3 sm:gap-4 shrink-0 transition-opacity duration-300">
+                        {/* Playback Speed */}
+                        {duration > 0 && duration < Infinity && (
+                            <div className="relative">
+                                <button onClick={(e) => { e.stopPropagation(); setShowSpeedMenu(!showSpeedMenu); setShowSubtitleMenu(false); setShowQualityMenu(false); setShowAudioMenu(false); }} className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full shrink-0 transition-colors flex items-center justify-center font-bold text-[10px] sm:text-xs ${playbackSpeed !== 1 ? 'text-primary bg-primary/20' : 'bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white'}`} title="Playback Speed">
+                                    {playbackSpeed}x
+                                </button>
+                                {showSpeedMenu && (
+                                    <div className="absolute bottom-full right-0 mb-2 sm:mb-4 bg-slate-900/95 backdrop-blur-xl border border-slate-700/60 rounded-2xl shadow-2xl overflow-hidden min-w-[120px] sm:min-w-[140px] z-50 animate-in fade-in slide-in-from-bottom-2 duration-200 py-1.5 sm:py-2">
+                                        <div className="px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-800 mb-1">Speed</div>
+                                        {[0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map(speed => (
+                                            <button key={speed} onClick={() => { setPlaybackSpeed(speed); if(videoRef.current) videoRef.current.playbackRate = speed; setShowSpeedMenu(false); }} className={`w-full text-left px-5 py-2.5 text-xs font-bold tracking-wide transition-colors ${playbackSpeed === speed ? 'text-primary bg-primary/10' : 'text-slate-300 hover:bg-white/5 hover:text-white'}`}>
+                                                {speed === 1 ? 'Normal' : speed + 'x'}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
                         {subtitleTracks.length > 0 && (
                             <div className="relative">
                                 <button onClick={(e) => { e.stopPropagation(); setShowSubtitleMenu(!showSubtitleMenu); setShowQualityMenu(false); setShowAudioMenu(false); }} className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full shrink-0 transition-colors flex items-center justify-center focus:outline-none ${activeSubtitleTrack !== -1 ? 'text-primary bg-primary/20' : 'bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white'}`} title="Subtitles">
@@ -907,12 +1149,13 @@ export default function Player({ channel }: PlayerProps) {
                             </div>
                         )}
                         
-                        <button onClick={toggleFullscreen} className="text-slate-300 hover:text-white transition-colors focus:outline-none" title="Fullscreen">
+                        <button aria-label="Toggle Fullscreen" onClick={toggleFullscreen} className="text-slate-300 hover:text-white transition-colors focus:outline-none" title="Fullscreen">
                             {isFullscreen ? <Minimize className="w-5 h-5 sm:w-6 sm:h-6" /> : <Maximize className="w-5 h-5 sm:w-6 sm:h-6" />}
                         </button>
                     </div>
                 </div>
             </div>
+            )}
         </div>
         )}
     </div>

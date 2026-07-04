@@ -1,4 +1,8 @@
-import express from "express";
+import fs from 'fs';
+
+let serverTs = fs.readFileSync('server.ts', 'utf8');
+
+const newServerTs = `import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import https from "https";
@@ -9,14 +13,12 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // Use a stable key for serverless environments (Vercel)
-  // so tokens remain valid across different lambda instances.
-  const baseKeyStr = process.env.STREAM_SECRET_KEY || "DEFAULT_STREAM_SECURE_TOKEN_KEY_V1";
-  const SECRET_KEY = crypto.createHash('sha256').update(baseKeyStr).digest();
+  // Generate a secret key for encrypting URLs in tokens
+  const SECRET_KEY = crypto.randomBytes(32);
 
   function encryptToken(url: string, expiresInMs: number = 5 * 60 * 1000): string {
       const expiresAt = Date.now() + expiresInMs;
-      const payload = `${expiresAt}|${url}`;
+      const payload = \`\${expiresAt}|\${url}\`;
       const iv = crypto.randomBytes(16);
       const cipher = crypto.createCipheriv('aes-256-cbc', SECRET_KEY, iv);
       let encrypted = cipher.update(payload, 'utf8', 'hex');
@@ -58,25 +60,24 @@ async function startServer() {
       }
       const count = Array.from(rateLimit.entries()).filter(([k, t]) => k.startsWith(ip) && t > windowStart).length;
       if (count >= LIMIT) return false;
-      rateLimit.set(`${ip}-${now}`, now);
+      rateLimit.set(\`\${ip}-\${now}\`, now);
       return true;
   }
 
   // Validates if the request comes from our own app
   function validateInternalRequest(req: express.Request, res: express.Response): boolean {
-      const origin = req.headers.origin || '';
       const referer = req.headers.referer || '';
-      const host = (req.headers['x-forwarded-host'] || req.headers.host || '') as string;
+      const origin = req.headers.origin || '';
+      const host = req.headers.host || '';
       
-      // Check if origin matches host (allow localhost for dev/preview)
-      if (origin) {
-          try {
-              const originHost = new URL(origin).host;
-              if (originHost !== host && !host.includes('localhost') && !originHost.includes('localhost') && !originHost.includes('ais-dev') && !originHost.includes('ais-pre')) {
-                  res.status(403).send("Forbidden: Invalid Origin");
-                  return false;
-              }
-          } catch(e) {}
+      // Some players don't send referer/origin, but if they do, they must match our host
+      if (origin && !origin.includes(host)) {
+          res.status(403).send("Forbidden: Invalid Origin");
+          return false;
+      }
+      if (referer && !referer.includes(host)) {
+          res.status(403).send("Forbidden: Invalid Referer");
+          return false;
       }
       return true;
   }
@@ -92,6 +93,7 @@ async function startServer() {
 
   // Caching
   const playlistCache = new Map<string, { m3uText: string, expiresAt: number }>();
+  const channelCache = new Map<string, string>(); // channelId -> originalUrl
 
   app.get("/api/channels", async (req, res) => {
     let targetUrl = req.query.url as string;
@@ -111,7 +113,39 @@ async function startServer() {
         if (!fetchRes.ok) throw new Error('Fetch failed');
         const text = await fetchRes.text();
         
-        const m3uText = text;
+        const lines = text.split('\\n');
+        const rewrittenLines = [];
+        
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (line.startsWith('#EXTINF:')) {
+                rewrittenLines.push(lines[i]);
+                // Look for the URL line
+                let j = i + 1;
+                while (j < lines.length) {
+                    const nextLine = lines[j].trim();
+                    if (nextLine && !nextLine.startsWith('#')) {
+                        const originalUrl = nextLine;
+                        const channelId = crypto.createHash('md5').update(originalUrl).digest('hex');
+                        channelCache.set(channelId, originalUrl);
+                        
+                        // Rewrite URL
+                        const host = req.headers.host || '';
+                        const proto = req.protocol || 'http';
+                        rewrittenLines.push(\`\${proto}://\${host}/api/live/\${channelId}\`);
+                        i = j;
+                        break;
+                    } else {
+                        rewrittenLines.push(lines[j]);
+                        j++;
+                    }
+                }
+            } else {
+                rewrittenLines.push(lines[i]);
+            }
+        }
+        
+        const m3uText = rewrittenLines.join('\\n');
         playlistCache.set(targetUrl, {
             m3uText,
             expiresAt: Date.now() + 10 * 60 * 1000 // 10 minutes cache
@@ -136,7 +170,7 @@ async function startServer() {
 
   app.get("/api/live/:id", (req, res) => {
       const channelId = req.params.id;
-      const originalUrl = decryptToken(channelId);
+      const originalUrl = channelCache.get(channelId);
       
       if (!originalUrl) {
           return res.status(404).send('Channel not found or expired. Please refresh the playlist.');
@@ -144,7 +178,7 @@ async function startServer() {
       
       // Generate a short-lived token to start playback
       const token = encryptToken(originalUrl, 5 * 60 * 1000); // 5 minutes
-      res.redirect(`/api/play/${token}`);
+      res.redirect(\`/api/play/\${token}\`);
   });
 
   app.get(["/api/play/:token", "/api/stream/:token"], (req, res) => {
@@ -237,7 +271,7 @@ async function startServer() {
                       }
                       // Protect location header with new token
                       const locToken = encryptToken(loc, 60 * 60 * 1000);
-                      res.setHeader(key, `/api/stream/${locToken}`);
+                      res.setHeader(key, \`/api/stream/\${locToken}\`);
                   } else {
                       res.setHeader(key, value);
                   }
@@ -255,7 +289,7 @@ async function startServer() {
                 body += chunk;
             });
             proxyRes.on('end', () => {
-                const lines = body.split('\n');
+                const lines = body.split('\\n');
                 const rewritten = lines.map(line => {
                     const trimmed = line.trim();
                     if (trimmed && !trimmed.startsWith('#')) {
@@ -263,7 +297,7 @@ async function startServer() {
                             const absUrl = new URL(trimmed, targetUrl).href;
                             // 2-hour token for segments
                             const segToken = encryptToken(absUrl, 2 * 60 * 60 * 1000); 
-                            return `/api/stream/${segToken}`;
+                            return \`/api/stream/\${segToken}\`;
                         } catch(e) {
                             return line;
                         }
@@ -272,14 +306,14 @@ async function startServer() {
                             try {
                                 const absUrl = new URL(uri, targetUrl).href;
                                 const keyToken = encryptToken(absUrl, 2 * 60 * 60 * 1000); 
-                                return `URI="/api/stream/${keyToken}"`;
+                                return \`URI="/api/stream/\${keyToken}"\`;
                             } catch(e) {
                                 return match;
                             }
                         });
                     }
                     return line;
-                }).join('\n');
+                }).join('\\n');
                 res.send(rewritten);
             });
             return;
@@ -289,9 +323,8 @@ async function startServer() {
     });
     
     proxyReq.on("error", (err) => {
-        console.error("Proxy error for target:", targetUrl, err);
         if (!res.headersSent) {
-            res.status(502).send("Proxy Error: " + err.message);
+            res.status(502).send("Proxy Error");
         }
     });
 
@@ -327,8 +360,11 @@ async function startServer() {
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(\`Server running on http://localhost:\${PORT}\`);
   });
 }
 
 startServer();
+`
+
+fs.writeFileSync('server.ts', newServerTs);

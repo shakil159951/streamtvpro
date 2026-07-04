@@ -4,7 +4,7 @@ const DEFAULT_PLAYLISTS: Playlist[] = [
   {
     id: 'streamtv_default',
     name: 'Stream TV Pro',
-    url: 'https://raw.githubusercontent.com/shakil951/PlaylistCheck/refs/heads/main/combined_playlist.m3u',
+    url: '/api/playlists',
     active: true,
     isDefault: true,
     type: 'live'
