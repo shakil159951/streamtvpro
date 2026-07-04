@@ -58,7 +58,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const fetchHeaders = new Headers();
-    const allowedHeaders = ['user-agent', 'accept', 'accept-language', 'cookie', 'authorization', 'range'];
+    const allowedHeaders = ['accept', 'accept-language', 'range'];
     
     for (const [key, value] of Object.entries(req.headers)) {
         const lowerKey = key.toLowerCase();
@@ -103,13 +103,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     
     if (!fetchHeaders.has("user-agent")) {
         fetchHeaders.set("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36");
-    }
-
-    if (!hasCustomReferer) {
-        fetchHeaders.set("referer", urlObj.origin + "/");
-    }
-    if (!hasCustomOrigin) {
-        fetchHeaders.set("origin", urlObj.origin);
     }
 
     const controller = new AbortController();

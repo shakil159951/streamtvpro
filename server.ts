@@ -4,6 +4,8 @@ import { createServer as createViteServer } from "vite";
 import https from "https";
 import http from "http";
 import crypto from "crypto";
+import { Readable } from "stream";
+import { Readable } from "stream";
 
 async function startServer() {
   const app = express();
@@ -327,7 +329,7 @@ async function handleProxyRequest(targetUrl: string, req: express.Request, res: 
         }
 
         if (proxyRes.body) {
-            const { Readable } = require('stream');
+            
             const nodeStream = Readable.fromWeb(proxyRes.body);
             
             nodeStream.on('error', (streamErr: any) => {

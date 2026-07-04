@@ -188,25 +188,24 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
     const canPlayWebm = videoRef.current ? videoRef.current.canPlayType('video/webm') !== '' : true;
     
     const PROXIES = [
-        '',
-        window.location.origin + '/api/proxy?url=',
-        'https://corsproxy.io/?url=',
-        'https://api.allorigins.win/raw?url='
+        '', // Index 0: usually the URL from M3U (which might already be proxied by m3u.ts)
+        'DIRECT' // Index 1: Force direct connection (bypassing the proxy)
     ];
     const maxProxyIndex = PROXIES.length - 1;
     const getProxiedUrl = (url: string, proxyIdx: number): string => {
+        // If the URL is already routed through our proxy, don't double-proxy it
+        if (url.startsWith('/api/proxy') && proxyIdx > 0) {
+            // Extract the original URL and proxy that instead
+            const match = url.match(/u=([^&]+)/);
+            if (match) {
+                url = decodeURIComponent(match[1]);
+            }
+        }
         
         if (proxyIdx === 0) return url;
         const p = PROXIES[proxyIdx];
-        if (p.includes('/api/proxy?url=')) {
-            let resUrl = p + encodeURIComponent(url) + '&rewrite=1';
-            if (channel.referer) {
-                resUrl += `&referer=${encodeURIComponent(channel.referer)}`;
-            }
-            if (channel.userAgent) {
-                resUrl += `&useragent=${encodeURIComponent(channel.userAgent)}`;
-            }
-            return resUrl;
+        if (p === 'DIRECT') {
+            return url; // url is already the decoded original URL thanks to the match above
         }
         if (p.includes('thingproxy') || p.includes('codetabs')) {
             return p + url;
@@ -223,7 +222,6 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
         isHandlingFailure = true;
         if (engine === 'Auto' && autoEngineIndex < autoEngines.length - 1) {
             const nextEngine = autoEngines[autoEngineIndex + 1];
-            setError(`Stream failed. Auto-switching to ${nextEngine} player...`);
             setLoading(true);
             if (!isDestroyed) setAutoEngineIndex(prev => prev + 1);
         } else {
@@ -425,11 +423,7 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
             lowLatencyMode: true, 
             backBufferLength: 90,
             liveSyncDurationCount: 3,
-            xhrSetup: (xhr, url) => {
-                if (url.startsWith('/api/') || url.includes(window.location.host)) {
-                    xhr.withCredentials = true; // Send cookies for AI Studio proxy check
-                }
-            },
+            
             liveMaxLatencyDurationCount: 10,
             manifestLoadingMaxRetry: 2,
             manifestLoadingRetryDelay: 1000,
@@ -464,6 +458,12 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
         hls.on(Hls.Events.ERROR, (_, data) => {
             if (data.fatal) {
                 if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+                    if (data.response && (data.response.code === 404 || data.response.code === 403)) {
+                        hls.destroy();
+                        setError(`Stream access denied or not found (${data.response.code})`);
+                        setLoading(false);
+                        return;
+                    }
                     if (proxyIdx < maxProxyIndex) {
                         initHls(proxyIdx + 1);
                     } else {
@@ -545,17 +545,12 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
                 errorDisplay: false,
                 sources: [srcObj],
                 html5: {
-                    vhs: {
-                        beforeRequest: (options: any) => {
-                            if (options.uri.startsWith('/api/') || options.uri.includes(window.location.host)) {
-                                options.withCredentials = true;
-                            }
-                            return options;
-                        }
-                    }
+                    
                 }
             });
             videojsRef.current = player;
+            player.on('playing', () => { setIsPlaying(true); setLoading(false); setError(''); });
+            player.on('play', () => { setIsPlaying(true); setLoading(false); setError(''); });
             player.on('error', () => { 
                 const err = player.error();
                 const errMsg = err ? `Video.js Error: ${err.message || 'CODE ' + err.code}` : 'Video.js Error';
@@ -592,15 +587,10 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
                 chromeless: false,
                 parentId: clapprContainerRef.current,
                 playback: {
-                    hlsjsConfig: {
-                        xhrSetup: (xhr: any, url: string) => {
-                            if (url.startsWith('/api/') || url.includes(window.location.host)) {
-                                xhr.withCredentials = true;
-                            }
-                        }
-                    }
+                    
                 }
             });
+            player.on(Clappr.Events.PLAYER_PLAY, () => { setIsPlaying(true); setLoading(false); setError(''); });
             player.on(Clappr.Events.PLAYER_ERROR, () => { 
                 if (proxyIdx < maxProxyIndex) initClappr(proxyIdx + 1);
                 else handleEngineFailure('Clappr Error'); 
@@ -627,11 +617,10 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
         const video = document.createElement('video');
         const canPlayNativeHls = video.canPlayType('application/vnd.apple.mpegurl') || video.canPlayType('application/x-mpegurl');
         
-        if (canPlayNativeHls && (isM3u8Ext || !isDirectExt)) {
-            // Prefer native playback on devices that support it (Safari, iOS, Android Chrome) to bypass CORS issues
-            tryNativeFirst(0);
-        } else if (!isDirectExt && Hls.isSupported()) {
+        if (!isDirectExt && Hls.isSupported()) {
             initHls(0);
+        } else if (canPlayNativeHls && (isM3u8Ext || !isDirectExt)) {
+            tryNativeFirst(0);
         } else {
             tryNativeFirst(0);
         }

@@ -6,6 +6,7 @@ export interface Channel {
   group: string;
   referer?: string;
   userAgent?: string;
+  cookie?: string;
 }
 
 export interface Playlist {

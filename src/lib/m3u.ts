@@ -1,13 +1,21 @@
 import { Channel } from '../types';
 
-const buildProxyUrl = (targetUrl: string, ref?: string, ua?: string) => {
+const buildProxyUrl = (targetUrl: string, ref?: string, ua?: string, cookie?: string) => {
     if (targetUrl.includes('/api/proxy')) return targetUrl;
     
+    if (targetUrl.match(/^https?:\/\/(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|127\.|localhost)/)) {
+        return targetUrl;
+    }
+    
+    // Some channels only work via proxy if they have headers
+    // But for now, let's keep everything passing through proxy EXCEPT local IPs
+    // and let Player.tsx handle fallbacks.
     let rewrittenUrl = `/api/proxy?u=${encodeURIComponent(targetUrl)}`;
     
     const headers: Record<string, string> = {};
     if (ref) headers['Referer'] = ref;
     if (ua) headers['User-Agent'] = ua;
+    if (cookie) headers['Cookie'] = cookie;
     
     if (Object.keys(headers).length > 0) {
         rewrittenUrl += `&h=${encodeURIComponent(btoa(JSON.stringify(headers)))}`;
@@ -28,6 +36,7 @@ export function parseM3U(text: string): Channel[] {
               
               let referer = item.referer || item.referrer || '';
               let userAgent = item.userAgent || item.user_agent || '';
+              let cookie = item.cookie || '';
               
               if (url.includes('|Referer=')) {
                 const parts = url.split('|Referer=');
@@ -43,11 +52,12 @@ export function parseM3U(text: string): Channel[] {
               return {
                   uid: `json-ch-${index}`,
                   name,
-                  url: buildProxyUrl(url, referer, userAgent),
+                  url: buildProxyUrl(url, referer, userAgent, cookie),
                   logo,
                   group,
                   referer,
-                  userAgent
+                  userAgent,
+                  cookie
               };
           }).filter(c => c.url && c.url !== '/api/proxy?u='); // filter out empty URLs
       }
@@ -60,6 +70,7 @@ export function parseM3U(text: string): Channel[] {
   let current: Partial<Channel> | null = null;
   let referer = '';
   let userAgent = '';
+  let cookie = '';
   const uidCounts: Record<string, number> = {};
 
   for (let i = 0; i < lines.length; i++) {
@@ -118,15 +129,21 @@ export function parseM3U(text: string): Channel[] {
         urlStr = parts[0];
         referer = parts[1].split('&')[0];
       }
+      if (urlStr.includes('|Cookie=')) {
+        const parts = urlStr.split('|Cookie=');
+        urlStr = parts[0];
+        cookie = parts[1].split('&')[0];
+      }
       if (urlStr.includes('|User-Agent=')) {
         const parts = urlStr.split('|User-Agent=');
         urlStr = parts[0];
         userAgent = parts[1].split('&')[0];
       }
       
-      current.url = buildProxyUrl(urlStr, referer, userAgent);
+      current.url = buildProxyUrl(urlStr, referer, userAgent, cookie);
       if (referer) current.referer = referer;
       if (userAgent) current.userAgent = userAgent;
+      if (cookie) current.cookie = cookie;
 
       channels.push(current as Channel);
       current = null;
