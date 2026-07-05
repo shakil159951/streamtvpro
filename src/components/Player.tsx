@@ -62,7 +62,7 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
   const [activeAudioTrack, setActiveAudioTrack] = useState<number>(-1);
   const [showAudioMenu, setShowAudioMenu] = useState(false);
   
-  const [engine, setEngine] = useState<'Auto' | 'Shaka' | 'Clappr' | 'dash.js' | 'Video.js'>('Auto');
+  const [engine, setEngine] = useState<'Default' | 'Shaka' | 'Clappr' | 'dash.js' | 'Video.js'>('Default');
   const [autoEngineIndex, setAutoEngineIndex] = useState(0);
   const [retryTick, setRetryTick] = useState(0);
   
@@ -73,8 +73,7 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
   const hasResumed = useRef(false);
 
   useEffect(() => {
-    setAutoEngineIndex(0);
-    setPlaybackSpeed(1);
+        setPlaybackSpeed(1);
     setDetectedExt(null);
     
     if (channel) {
@@ -188,29 +187,40 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
     const canPlayWebm = videoRef.current ? videoRef.current.canPlayType('video/webm') !== '' : true;
     
     const PROXIES = [
-        '', // Index 0: usually the URL from M3U (which might already be proxied by m3u.ts)
-        'DIRECT' // Index 1: Force direct connection (bypassing the proxy)
+        'DIRECT',
+        'PROXY'
     ];
     const maxProxyIndex = PROXIES.length - 1;
     const getProxiedUrl = (url: string, proxyIdx: number): string => {
-        // If the URL is already routed through our proxy, don't double-proxy it
-        if (url.startsWith('/api/proxy') && proxyIdx > 0) {
-            // Extract the original URL and proxy that instead
-            const match = url.match(/u=([^&]+)/);
+        const p = PROXIES[proxyIdx];
+        
+        let originalUrl = url;
+        let isAlreadyProxied = url.startsWith('/api/proxy');
+        
+        if (isAlreadyProxied) {
+            const match = url.match(/[?&]u=([^&]+)/);
             if (match) {
-                url = decodeURIComponent(match[1]);
+                originalUrl = decodeURIComponent(match[1]);
+            }
+        }
+
+        if (p === 'DIRECT') {
+            return originalUrl;
+        }
+        
+        if (p === 'PROXY') {
+            if (isAlreadyProxied) {
+                return url; // use as-is from m3u.ts
+            } else {
+                let resUrl = '/api/proxy?u=' + encodeURIComponent(originalUrl);
+                if (channel.referer) resUrl += `&referer=${encodeURIComponent(channel.referer)}`;
+                if (channel.userAgent) resUrl += `&useragent=${encodeURIComponent(channel.userAgent)}`;
+                if (channel.cookie) resUrl += `&cookie=${encodeURIComponent(channel.cookie)}`;
+                return resUrl;
             }
         }
         
-        if (proxyIdx === 0) return url;
-        const p = PROXIES[proxyIdx];
-        if (p === 'DIRECT') {
-            return url; // url is already the decoded original URL thanks to the match above
-        }
-        if (p.includes('thingproxy') || p.includes('codetabs')) {
-            return p + url;
-        }
-        return p + encodeURIComponent(url);
+        return originalUrl;
     };
 
     let isDestroyed = false;
@@ -220,11 +230,7 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
     const handleEngineFailure = (msg: string) => {
         if (isDestroyed || isHandlingFailure) return;
         isHandlingFailure = true;
-        if (engine === 'Auto' && autoEngineIndex < autoEngines.length - 1) {
-            const nextEngine = autoEngines[autoEngineIndex + 1];
-            setLoading(true);
-            if (!isDestroyed) setAutoEngineIndex(prev => prev + 1);
-        } else {
+        if (false) {
             setError(msg);
             setLoading(false);
         }
@@ -384,6 +390,10 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
             
             player.on(mpegts.Events.ERROR, (errorType: any, errorDetail: any, info: any) => {
                 if (errorDetail === 'HttpStatusCodeInvalid' && info && (info.code === 403 || info.code === 401 || info.code === 404)) {
+                    if (proxyIdx < maxProxyIndex) {
+                        initMpegts(proxyIdx + 1);
+                        return;
+                    }
                     setError('MPEG-TS Error: Stream access denied or not found (' + info.code + ')');
                     setLoading(false);
                     return;
@@ -425,9 +435,9 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
             liveSyncDurationCount: 3,
             
             liveMaxLatencyDurationCount: 10,
-            manifestLoadingMaxRetry: 2,
-            manifestLoadingRetryDelay: 1000,
-            levelLoadingMaxRetry: 2,
+            manifestLoadingMaxRetry: 1,
+            manifestLoadingRetryDelay: 400,
+            levelLoadingMaxRetry: 1,
             fragLoadingMaxRetry: 2
         });
         
@@ -458,11 +468,16 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
         hls.on(Hls.Events.ERROR, (_, data) => {
             if (data.fatal) {
                 if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-                    if (data.response && (data.response.code === 404 || data.response.code === 403)) {
-                        hls.destroy();
-                        setError(`Stream access denied or not found (${data.response.code})`);
-                        setLoading(false);
-                        return;
+                    if (data.response && (data.response.code === 404 || data.response.code === 403 || data.response.code === 401)) {
+                        if (proxyIdx < maxProxyIndex) {
+                            initHls(proxyIdx + 1);
+                            return;
+                        } else {
+                            hls.destroy();
+                            setError(`Stream access denied or not found (${data.response.code})`);
+                            setLoading(false);
+                            return;
+                        }
                     }
                     if (proxyIdx < maxProxyIndex) {
                         initHls(proxyIdx + 1);
@@ -640,6 +655,18 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
         if (dashRef.current) {
             dashRef.current.destroy();
             dashRef.current = null;
+        }
+        if (shakaRef.current) {
+            shakaRef.current.destroy();
+            shakaRef.current = null;
+        }
+        if (videojsRef.current) {
+            videojsRef.current.dispose();
+            videojsRef.current = null;
+        }
+        if (clapprRef.current) {
+            clapprRef.current.destroy();
+            clapprRef.current = null;
         }
     };
   }, [channel, engine, autoEngineIndex, retryTick]);
@@ -984,10 +1011,10 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
                         <div className="absolute inset-0 rounded-full animate-ping bg-red-500/10" style={{ animationDuration: '3s' }}></div>
                         <AlertCircle className="w-10 h-10 text-red-400 relative z-10" />
                     </div>
-                    <h3 className="text-2xl font-bold text-white mb-3 tracking-tight">{error.includes('Auto-switching') ? 'Switching Engine' : 'Playback Failed'}</h3>
-                    <p className="text-slate-300 text-sm mb-6 leading-relaxed px-2 font-medium">{error.includes('Auto-switching') ? error : 'The stream is currently offline, unsupported, or geo-blocked.'}</p>
+                    <h3 className="text-2xl font-bold text-white mb-3 tracking-tight">'Playback Failed'</h3>
+                    <p className="text-slate-300 text-sm mb-6 leading-relaxed px-2 font-medium">'The stream is currently offline, unsupported, or geo-blocked.'</p>
                     
-                    {!error.includes('Auto-switching') && (
+                    {(true) && (
                         <>
                         <div className="border border-red-500/10 bg-red-500/5 rounded-2xl px-5 py-4 mb-8 shadow-inner text-left overflow-y-auto max-h-32 custom-scrollbar">
                             <p className="text-slate-400 text-xs font-mono break-words leading-relaxed">
@@ -1027,15 +1054,9 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
                 </div>
                 <div className="flex flex-col items-end gap-2">
                     <div className="flex items-center bg-slate-900/90 backdrop-blur-md rounded-full border border-slate-700 p-1 shadow-lg pointer-events-auto">
-                        {['Auto', 'Video.js', 'Shaka', 'dash.js', 'Clappr'].map(eng => {
-                            let btnClass = 'text-slate-400 hover:text-white';
-                            if (engine === 'Auto') {
-                                if (eng === 'Auto') {
-                                    btnClass = activeEngine === 'Default' ? 'bg-[#52d869] text-black shadow-md' : 'border border-[#52d869] text-[#52d869] bg-[#52d869]/10';
-                                } else if (activeEngine === eng) {
-                                    btnClass = 'bg-[#52d869] text-black shadow-md';
-                                }
-                            } else if (engine === eng) {
+                        {['Default', 'Video.js', 'Shaka', 'dash.js', 'Clappr'].map(eng => {
+                            let btnClass = 'bg-white/10 text-slate-300 hover:bg-white/20 hover:text-white';
+                            if (engine === eng) {
                                 btnClass = 'bg-[#52d869] text-black shadow-md';
                             }
                             

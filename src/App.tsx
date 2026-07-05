@@ -185,24 +185,30 @@ export default function App() {
   const displayChannels = activeTab === 'vod' ? m3uVodChannels : channels;
 
   const filteredChannels = useMemo(() => {
+    if (!displayChannels) return [];
+    const lowerSearch = search.toLowerCase();
     return displayChannels.filter(c => {
-      const matchQ = !search || c.name.toLowerCase().includes(search.toLowerCase()) || c.group.toLowerCase().includes(search.toLowerCase());
+      const matchQ = !lowerSearch || c.name.toLowerCase().includes(lowerSearch) || c.group.toLowerCase().includes(lowerSearch);
       const matchG = !groupFilter || c.group === groupFilter;
       return matchQ && matchG;
     });
   }, [displayChannels, search, groupFilter]);
 
   const filteredMovies = useMemo(() => {
+    if (!movies) return [];
+    const lowerSearch = search.toLowerCase();
     return movies.filter(m => {
-      const matchQ = (m.name || '').toLowerCase().includes(search.toLowerCase());
+      const matchQ = !lowerSearch || (m.name || '').toLowerCase().includes(lowerSearch);
       const matchC = !vodCategoryFilter || m.category_id === vodCategoryFilter;
       return matchQ && matchC;
     });
   }, [movies, search, vodCategoryFilter]);
 
   const filteredSeries = useMemo(() => {
+    if (!seriesList) return [];
+    const lowerSearch = search.toLowerCase();
     return seriesList.filter(s => {
-      const matchQ = (s.name || '').toLowerCase().includes(search.toLowerCase());
+      const matchQ = !lowerSearch || (s.name || '').toLowerCase().includes(lowerSearch);
       const matchC = !vodCategoryFilter || s.category_id === vodCategoryFilter;
       return matchQ && matchC;
     });

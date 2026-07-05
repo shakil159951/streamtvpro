@@ -65,7 +65,12 @@ export function parseM3U(text: string): Channel[] {
       // Not valid JSON, proceed to parse as M3U
   }
 
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const rawLines = text.split('\n');
+  const lines: string[] = [];
+  for (let i = 0; i < rawLines.length; i++) {
+    const trimmed = rawLines[i].trim();
+    if (trimmed) lines.push(trimmed);
+  }
   const channels: Channel[] = [];
   let current: Partial<Channel> | null = null;
   let referer = '';
