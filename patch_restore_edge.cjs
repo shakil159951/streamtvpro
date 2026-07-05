@@ -1,4 +1,6 @@
-export const config = {
+const fs = require('fs');
+
+const code = `export const config = {
   runtime: 'edge',
 };
 
@@ -93,7 +95,7 @@ export default async function handler(req: Request) {
 
       if (isM3u8 && proxyRes.status >= 200 && proxyRes.status < 300) {
           const text = await proxyRes.text();
-          const lines = text.split('\n');
+          const lines = text.split('\\n');
 
           const proxyUrlParams = new URLSearchParams(url.searchParams);
           proxyUrlParams.delete('u');
@@ -105,10 +107,10 @@ export default async function handler(req: Request) {
           proxyUrlParams.delete('origin');
           
           const buildRewrittenUrl = (absUrl) => {
-              let rewrittenUrl = `/api/proxy?u=${encodeURIComponent(absUrl)}`;
-              if (customHeadersBase64) rewrittenUrl += `&h=${encodeURIComponent(customHeadersBase64)}`;
+              let rewrittenUrl = \`/api/proxy?u=\${encodeURIComponent(absUrl)}\`;
+              if (customHeadersBase64) rewrittenUrl += \`&h=\${encodeURIComponent(customHeadersBase64)}\`;
               const extraParams = proxyUrlParams.toString();
-              if (extraParams) rewrittenUrl += `&${extraParams}`;
+              if (extraParams) rewrittenUrl += \`&\${extraParams}\`;
               return rewrittenUrl;
           };
 
@@ -125,14 +127,14 @@ export default async function handler(req: Request) {
                   return line.replace(/URI="([^"]+)"/g, (match, uri) => {
                       try {
                           const absUrl = new URL(uri, finalUrl).href;
-                          return `URI="${buildRewrittenUrl(absUrl)}"`;
+                          return \`URI="\${buildRewrittenUrl(absUrl)}"\`;
                       } catch(e) {
                           return match;
                       }
                   });
               }
               return line;
-          }).join('\n');
+          }).join('\\n');
 
           // responseHeaders.set('Content-Length', new Blob([rewritten]).size.toString());
 
@@ -148,6 +150,8 @@ export default async function handler(req: Request) {
       });
 
   } catch (err) {
-      return new Response(`Proxy Error: ${err.message}`, { status: 502 });
+      return new Response(\`Proxy Error: \${err.message}\`, { status: 502 });
   }
 }
+`;
+fs.writeFileSync('api/proxy.ts', code);

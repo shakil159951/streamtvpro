@@ -248,6 +248,9 @@ async function handleProxyRequest(targetUrl: string, req: express.Request, res: 
     
     fetchHeaders.set('x-forwarded-for', '103.112.150.1');
     fetchHeaders.set('x-real-ip', '103.112.150.1');
+    fetchHeaders.set('client-ip', '103.112.150.1');
+    fetchHeaders.set('true-client-ip', '103.112.150.1');
+    fetchHeaders.set('cf-connecting-ip', '103.112.150.1');
 
     if (!fetchHeaders.has("user-agent")) {
         fetchHeaders.set("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36");
