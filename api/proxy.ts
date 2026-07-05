@@ -1,6 +1,5 @@
 export const config = {
   runtime: 'edge',
-  regions: ['sin1', 'bom1'],
 };
 
 export default async function handler(req: Request) {
@@ -53,6 +52,14 @@ export default async function handler(req: Request) {
       if (url.searchParams.get('origin')) fetchHeaders.set('origin', url.searchParams.get('origin')!);
   }
 
+  
+  const clientIp = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip');
+  if (clientIp) {
+      fetchHeaders.set('x-forwarded-for', clientIp);
+  } else {
+      fetchHeaders.set('x-forwarded-for', '103.112.150.1'); // A dummy BD IP
+  }
+  
   if (!fetchHeaders.has('user-agent')) {
       fetchHeaders.set('user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36');
   }
@@ -69,7 +76,7 @@ export default async function handler(req: Request) {
       responseHeaders.set('Access-Control-Allow-Methods', 'GET, OPTIONS, HEAD');
       responseHeaders.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Content-Type, Accept-Ranges');
 
-      const headersToPreserve = ['content-type', 'cache-control', 'accept-ranges', 'etag', 'last-modified', 'content-length', 'content-range'];
+      const headersToPreserve = ['content-type', 'cache-control', 'accept-ranges', 'etag', 'last-modified', 'content-range'];
       const contentType = proxyRes.headers.get('content-type')?.toLowerCase() || '';
       const finalUrl = proxyRes.url || targetUrl;
       const isM3u8 = contentType.includes('mpegurl') || contentType.includes('vnd.apple.mpegurl') || finalUrl.includes('.m3u8');
