@@ -1,5 +1,5 @@
 const fs = require('fs');
-let code = fs.readFileSync('api/proxy.ts', 'utf8');
+let code = fs.readFileSync('api/channels.ts', 'utf8');
 
 code = code.replace(
     /export const config = \{\n\s+runtime: 'edge',\n\};\n/,
@@ -10,4 +10,4 @@ code = code.replace(
 `
 );
 
-fs.writeFileSync('api/proxy.ts', code);
+fs.writeFileSync('api/channels.ts', code);

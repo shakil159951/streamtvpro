@@ -1,5 +1,6 @@
 export const config = {
   runtime: 'edge',
+  regions: ['sin1', 'bom1'],
 };
 
 export default async function handler(req: Request) {

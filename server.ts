@@ -5,7 +5,6 @@ import https from "https";
 import http from "http";
 import crypto from "crypto";
 import { Readable } from "stream";
-import { Readable } from "stream";
 
 async function startServer() {
   const app = express();
@@ -324,7 +323,7 @@ async function handleProxyRequest(targetUrl: string, req: express.Request, res: 
 
         if (proxyRes.body) {
             
-            const nodeStream = Readable.fromWeb(proxyRes.body);
+            const nodeStream = Readable.fromWeb(proxyRes.body as any);
             
             nodeStream.on('error', (streamErr: any) => {
                 console.error("Stream pipe error:", streamErr);

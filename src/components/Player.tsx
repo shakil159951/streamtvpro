@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import mpegts from 'mpegts.js';
-import * as dashjs from 'dashjs';
 
 if (mpegts && mpegts.LoggingControl) {
   mpegts.LoggingControl.enableAll = false;
@@ -23,12 +22,9 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const mpegtsRef = useRef<any>(null);
-  const dashRef = useRef<dashjs.MediaPlayerClass | null>(null);
   const shakaRef = useRef<any>(null);
   const videojsRef = useRef<any>(null);
   const videojsContainerRef = useRef<HTMLDivElement>(null);
-  const clapprRef = useRef<any>(null);
-  const clapprContainerRef = useRef<HTMLDivElement>(null);
   
   const [isPlaying, setIsPlaying] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -62,12 +58,10 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
   const [activeAudioTrack, setActiveAudioTrack] = useState<number>(-1);
   const [showAudioMenu, setShowAudioMenu] = useState(false);
   
-  const [engine, setEngine] = useState<'Default' | 'Shaka' | 'Clappr' | 'dash.js' | 'Video.js'>('Default');
-  const [autoEngineIndex, setAutoEngineIndex] = useState(0);
+  const [engine, setEngine] = useState<'Default' | 'Shaka' | 'Video.js'>('Default');
   const [retryTick, setRetryTick] = useState(0);
   
-  const autoEngines = ['Default', 'Shaka', 'Video.js', 'Clappr'];
-  const activeEngine = engine === 'Auto' ? (autoEngines[autoEngineIndex] || 'Default') : engine;
+  const activeEngine = engine;
   
   const overlayTimer = useRef<NodeJS.Timeout | null>(null);
   const hasResumed = useRef(false);
@@ -106,23 +100,14 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
       if (videoRef.current && !videoRef.current.paused) {
           videoRef.current.pause();
       }
-      if (clapprRef.current && clapprRef.current.pause) {
-          clapprRef.current.pause();
-      }
-      if (videojsRef.current && videojsRef.current.pause) {
+if (videojsRef.current && videojsRef.current.pause) {
           videojsRef.current.pause();
       }
     } else if (isPlaying) {
       if (videoRef.current && videoRef.current.paused) {
           videoRef.current.play().catch(()=>{});
       }
-      if (clapprRef.current && clapprRef.current.play) {
-          try {
-              const p = clapprRef.current.play();
-              if (p && p.catch) p.catch(() => {});
-          } catch(e) {}
-      }
-      if (videojsRef.current && videojsRef.current.play) {
+if (videojsRef.current && videojsRef.current.play) {
           try {
               const p = videojsRef.current.play();
               if (p && p.catch) p.catch(() => {});
@@ -157,11 +142,7 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
         mpegtsRef.current.destroy();
         mpegtsRef.current = null;
     }
-    if (dashRef.current) {
-        dashRef.current.destroy();
-        dashRef.current = null;
-    }
-    if (shakaRef.current) {
+if (shakaRef.current) {
         shakaRef.current.destroy();
         shakaRef.current = null;
     }
@@ -169,12 +150,7 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
         videojsRef.current.dispose();
         videojsRef.current = null;
     }
-    if (clapprRef.current) {
-        clapprRef.current.destroy();
-        clapprRef.current = null;
-    }
-    
-    const cleanUrl = channel.url.split('?')[0].split('#')[0];
+const cleanUrl = channel.url.split('?')[0].split('#')[0];
     const ext = detectedExt || (cleanUrl.split('.').pop() || '').toLowerCase();
     const directExts = ['mp4', 'mkv', 'webm', 'mov', 'm4v', 'ogg', 'ogv', 'avi', 'wmv', 'flv', 'mp3', 'aac', 'flac', 'wav', 'm4a'];
     const isM3u8Ext = ext === 'm3u8' || channel.url.includes('.m3u8');
@@ -258,9 +234,7 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
                  // Native failed on all proxies, fallback to Dash/Hls/MpegTS
                  if (isTsExt && mpegts.getFeatureList().mseLivePlayback) {
                      initMpegts(0);
-                 } else if (isDashExt) {
-                     initDash(0);
-                 } else if (isM3u8Ext) {
+} else if (isM3u8Ext) {
                      initHls(0);
                  } else if (ext === 'flv' && mpegts.getFeatureList().mseLivePlayback) {
                      initMpegts(0);
@@ -288,72 +262,6 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
                 handleError();
             }
         });
-    };
-
-    const initDash = (proxyIdx: number) => {
-        if (isDestroyed) return;
-        if (dashRef.current) {
-            dashRef.current.destroy();
-            dashRef.current = null;
-        }
-
-        const dashPlayer = dashjs.MediaPlayer().create();
-        dashPlayer.updateSettings({
-            streaming: { 
-                retryAttempts: { MPD: 2 },
-                liveCatchup: {
-                    enabled: true
-                }
-            }
-        });
-        dashRef.current = dashPlayer;
-        
-        dashPlayer.extend("RequestModifier", function () {
-            return {
-                modifyRequestHeader: function (xhr: any) {
-                    return xhr;
-                },
-                modifyRequestURL: function (url: string) {
-                    if (proxyIdx > 0 && !url.includes('/api/proxy')) {
-                        return getProxiedUrl(url, proxyIdx);
-                    }
-                    return url;
-                }
-            };
-        }, true);
-        
-        dashPlayer.on(dashjs.MediaPlayer.events.ERROR, (e: any) => {
-            if (proxyIdx < maxProxyIndex) {
-                 initDash(proxyIdx + 1);
-            } else {
-                 handleEngineFailure('DASH Error: Stream playback failed.');
-            }
-        });
-        dashPlayer.on(dashjs.MediaPlayer.events.PLAYBACK_PLAYING, () => {
-             setLoading(false);
-        });
-        
-        dashPlayer.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, () => {
-             try {
-                 const audioT = dashPlayer.getTracksFor('audio');
-                 if (audioT && audioT.length > 0) {
-                     setAudioTracks(audioT.map((t: any, i: number) => ({ id: i, label: t.lang || t.roles?.[0] || `Track ${i+1}` })));
-                     const currAudio = dashPlayer.getCurrentTrackFor('audio');
-                     setActiveAudioTrack(currAudio ? audioT.findIndex((t: any) => t === currAudio) : 0);
-                 }
-                 const textT = dashPlayer.getTracksFor('text');
-                 if (textT && textT.length > 0) {
-                     setSubtitleTracks(textT.map((t: any, i: number) => ({ id: i, label: t.lang || t.roles?.[0] || `Track ${i+1}` })));
-                 }
-             } catch(e) {}
-        });
-
-        try {
-            dashPlayer.initialize(videoRef.current as HTMLMediaElement, channel.url, true);
-        } catch(e: any) {
-            setError('Stream initialization failed: ' + (e.message || 'Invalid DASH format'));
-            setLoading(false);
-        }
     };
 
     const initMpegts = (proxyIdx: number) => {
@@ -579,53 +487,10 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
         }
     };
 
-    const initClappr = async (proxyIdx: number) => {
-        if (!clapprContainerRef.current) return;
-        try {
-            if (clapprRef.current) {
-                clapprRef.current.destroy();
-                clapprRef.current = null;
-            }
-            const Clappr = (await import('@clappr/player')).default;
-            const srcUrl = getProxiedUrl(channel.url, proxyIdx);
-            let mimeType;
-            if (channel.url.toLowerCase().includes('.m3u8')) mimeType = 'application/x-mpegURL';
-            else if (channel.url.toLowerCase().includes('.mpd')) mimeType = 'application/dash+xml';
-            else if (channel.url.toLowerCase().includes('.mp4')) mimeType = 'video/mp4';
-
-            const player = new Clappr.Player({
-                source: srcUrl,
-                mimeType: mimeType,
-                autoPlay: true,
-                width: '100%',
-                height: '100%',
-                chromeless: false,
-                parentId: clapprContainerRef.current,
-                playback: {
-                    
-                }
-            });
-            player.on(Clappr.Events.PLAYER_PLAY, () => { setIsPlaying(true); setLoading(false); setError(''); });
-            player.on(Clappr.Events.PLAYER_ERROR, () => { 
-                if (proxyIdx < maxProxyIndex) initClappr(proxyIdx + 1);
-                else handleEngineFailure('Clappr Error'); 
-            });
-            clapprRef.current = player;
-            setLoading(false);
-        } catch (e) {
-            if (proxyIdx < maxProxyIndex) initClappr(proxyIdx + 1);
-            else handleEngineFailure('Clappr Error');
-        }
-    };
-
     if (activeEngine === 'Shaka') {
         initShaka(0);
     } else if (activeEngine === 'Video.js') {
         initVideoJs(0);
-    } else if (activeEngine === 'Clappr') {
-        initClappr(0);
-    } else if (isDashExt || activeEngine === 'dash.js') {
-        initDash(0);
     } else if ((isTsExt || ext === 'flv') && mpegts.getFeatureList().mseLivePlayback) {
         initMpegts(0);
     } else {
@@ -652,11 +517,7 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
             mpegtsRef.current.destroy();
             mpegtsRef.current = null;
         }
-        if (dashRef.current) {
-            dashRef.current.destroy();
-            dashRef.current = null;
-        }
-        if (shakaRef.current) {
+    if (shakaRef.current) {
             shakaRef.current.destroy();
             shakaRef.current = null;
         }
@@ -664,12 +525,8 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
             videojsRef.current.dispose();
             videojsRef.current = null;
         }
-        if (clapprRef.current) {
-            clapprRef.current.destroy();
-            clapprRef.current = null;
-        }
     };
-  }, [channel, engine, autoEngineIndex, retryTick]);
+  }, [channel, engine, retryTick]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -806,9 +663,7 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
   const selectSubtitle = (idx: number) => {
       if (hlsRef.current) {
           hlsRef.current.subtitleTrack = idx;
-      } else if (dashRef.current) {
-          dashRef.current.setTextTrack(idx);
-      }
+}
       setActiveSubtitleTrack(idx);
       setShowSubtitleMenu(false);
   };
@@ -816,10 +671,7 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
   const selectAudio = (idx: number) => {
       if (hlsRef.current) {
           hlsRef.current.audioTrack = idx;
-      } else if (dashRef.current) {
-          const tracks = dashRef.current.getTracksFor('audio');
-          if (tracks && tracks[idx]) dashRef.current.setCurrentTrack(tracks[idx]);
-      }
+}
       setActiveAudioTrack(idx);
       setShowAudioMenu(false);
   };
@@ -946,15 +798,10 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
             className="w-full h-full absolute inset-0 z-0 [&_.video-js]:!w-full [&_.video-js]:!h-full [&_.vjs-error-display]:!hidden" 
             style={{ display: activeEngine === 'Video.js' && !isDevToolsOpen ? 'block' : 'none' }} 
         />
-        <div 
-            ref={clapprContainerRef} 
-            className="w-full h-full absolute inset-0 z-0" 
-            style={{ display: activeEngine === 'Clappr' && !isDevToolsOpen ? 'block' : 'none' }} 
-        />
         <video 
             ref={videoRef} 
             className="w-full h-full object-contain relative z-10"
-            style={{ display: (activeEngine === 'Clappr' || activeEngine === 'Video.js') ? 'none' : 'block' }}
+            style={{ display: (activeEngine === 'Video.js') ? 'none' : 'block' }}
             autoPlay 
             playsInline
             onClick={togglePlay}
@@ -977,18 +824,7 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
             </div>
         )}
         
-        {loading && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-md z-30 pointer-events-none transition-all duration-500">
-                <div className="relative flex items-center justify-center mb-6">
-                   <div className="absolute inset-0 border-[3px] border-white/5 rounded-full w-16 h-16 blur-[1px]"></div>
-                   <div className="animate-spin w-16 h-16 border-[3px] border-primary border-t-transparent border-l-transparent rounded-full shadow-[0_0_20px_rgba(20,184,166,0.4)]" />
-                   <div className="absolute inset-0 flex items-center justify-center">
-                        <div className="w-2 h-2 bg-primary rounded-full animate-pulse shadow-[0_0_10px_rgba(20,184,166,0.8)]" />
-                   </div>
-                </div>
-                <h3 className="text-white/80 font-medium tracking-[0.3em] uppercase text-xs animate-pulse">Initializing</h3>
-            </div>
-        )}
+        
         
         
         {isDevToolsOpen && (
@@ -1026,7 +862,6 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
                                 onClick={() => { 
                                     setError(''); 
                                     setLoading(true); 
-                                    setAutoEngineIndex(0); 
                                     setRetryTick(t => t + 1); 
                                 }}
                                 className="w-full sm:w-auto px-8 py-3.5 bg-white text-black hover:bg-slate-200 rounded-xl text-sm font-bold transition-all hover:scale-[1.02] active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-black shadow-lg"
@@ -1053,8 +888,9 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
                     <span className="font-semibold text-xs sm:text-sm tracking-wide text-white truncate border-l border-slate-700 pl-3">{channel.name}</span>
                 </div>
                 <div className="flex flex-col items-end gap-2">
+
                     <div className="flex items-center bg-slate-900/90 backdrop-blur-md rounded-full border border-slate-700 p-1 shadow-lg pointer-events-auto">
-                        {['Default', 'Video.js', 'Shaka', 'dash.js', 'Clappr'].map(eng => {
+                        {['Default', 'Video.js', 'Shaka'].map(eng => {
                             let btnClass = 'bg-white/10 text-slate-300 hover:bg-white/20 hover:text-white';
                             if (engine === eng) {
                                 btnClass = 'bg-[#52d869] text-black shadow-md';
@@ -1079,7 +915,7 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
                 </div>
             </div>
             
-            {!(activeEngine === 'Clappr' || activeEngine === 'Video.js') && (
+            {!(activeEngine === 'Video.js') && (
             <div className="flex-1 flex items-center justify-center pointer-events-none">
               {!loading && !error && (
                 <button 
@@ -1092,7 +928,7 @@ export default function Player({ channel, isDevToolsOpen }: PlayerProps) {
             </div>
             )}
             
-            {!(activeEngine === 'Clappr' || activeEngine === 'Video.js') && (
+            {!(activeEngine === 'Video.js') && (
             <div className="p-4 sm:p-6 bg-gradient-to-t from-black/90 via-black/60 to-transparent pointer-events-auto flex flex-col relative w-full items-center justify-end pb-6">
                 
                 {/* Progress Bar */}
