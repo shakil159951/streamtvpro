@@ -277,7 +277,7 @@ export default function App() {
     
     if (data.playlists && Array.isArray(data.playlists)) {
       let currentPls = getPlaylists().filter(p => !p.id.startsWith('remote_'));
-      // If Firebase has playlists, we should remove the default playlist so it doesn't get merged if the admin didn't include it.
+      // If remote has playlists, we should remove the default playlist so it doesn't get merged.
       if (data.playlists.length > 0) {
         currentPls = currentPls.filter(p => !p.isDefault);
       }
@@ -332,7 +332,7 @@ export default function App() {
       localStorage.setItem('custom_json_config', JSON.stringify(data, null, 2));
       setCustomJsonInput(JSON.stringify(data, null, 2));
       setBackendSyncing(false);
-      setBackendSuccess('Config successfully published to Firebase!');
+      setBackendSuccess('Config saved locally!');
       setTimeout(() => setBackendSuccess(''), 3000);
       return true;
     } catch (e: any) {
@@ -1080,7 +1080,7 @@ export default function App() {
                   </div>
                   <div>
                     <h2 className="font-bold text-white text-lg">Server Configuration</h2>
-                    <p className="text-xs text-slate-400">Publish Notice, Playlists & Xtream to Firebase</p>
+                    <p className="text-xs text-slate-400">Save Notice, Playlists & Xtream Config</p>
                   </div>
                 </div>
                 
@@ -1135,7 +1135,7 @@ export default function App() {
                        className="flex-1 py-3 bg-primary hover:bg-primary active:bg-teal-700 text-white font-bold rounded-xl shadow-lg shadow-primary/20 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
                      >
                        {backendSyncing && <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
-                       Publish Config to Firebase
+                       Save Config Locally
                      </button>
                   </div>
                   
@@ -1253,11 +1253,11 @@ export default function App() {
                           localStorage.setItem('custom_json_config', JSON.stringify(data, null, 2));
                           localStorage.removeItem('backend_api_url');
                           
-                          // Also publish to firebase!
+                          // Save config locally
                           try {
                              await updateConfig(data);
                           } catch(err) {
-                             console.warn("Could not publish to firebase", err);
+                             console.warn("Could not save config", err);
                           }
                           
                           setActiveTab('channels');
